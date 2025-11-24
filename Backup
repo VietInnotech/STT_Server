@@ -1,0 +1,1004 @@
+package ymg.pwcca.test_stt.ui.main
+
+import android.Manifest
+import android.app.AlertDialog
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.util.DisplayMetrics
+import android.util.Log
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import java.io.File
+import java.io.FileInputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.app.ProgressDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.graphics.Typeface
+import android.view.View
+import android.widget.ImageButton
+import android.widget.ScrollView
+import android.widget.Switch
+import com.google.android.material.button.MaterialButton
+import org.json.JSONObject
+import ymg.pwcca.test_stt.R
+import ymg.pwcca.test_stt.audio.AudioRecordingService
+import ymg.pwcca.test_stt.audio.AudioServiceConnection
+import ymg.pwcca.test_stt.data.api.RetrofitClient
+import ymg.pwcca.test_stt.data.local.DeviceInfoProvider
+import ymg.pwcca.test_stt.data.local.SecurePreferences
+import ymg.pwcca.test_stt.data.repository.AuthRepository
+import ymg.pwcca.test_stt.ui.login.LoginActivity
+
+class MainActivity : AppCompatActivity(),
+    AudioRecordingService.AudioServiceCallbacks {
+
+    private lateinit var startButton: LinearLayout
+    private lateinit var pauseButton: LinearLayout
+    private lateinit var stopButton: LinearLayout
+    private lateinit var downloadAudio: LinearLayout
+    private lateinit var downloadText: LinearLayout
+    private lateinit var tvResult: TextView
+    private lateinit var bottomLiveCaption: TextView
+    private lateinit var rightControlsCard: LinearLayout
+    private lateinit var btnMore: ImageButton
+    private lateinit var switchSubtitles: Switch
+    private lateinit var switchAnnotations: Switch
+    private lateinit var scrollViewResults: ScrollView
+
+    // Audio Service Connection
+    private lateinit var audioServiceConnection: AudioServiceConnection
+
+    private var isUpdatingUI = false  // Flag để tránh infinite loop khi update switch
+    private val RECORD_AUDIO_REQUEST_CODE = 101
+    private val TAG = "MainActivity"
+
+    private var selectedWavFileToExport: File? = null
+    
+    // JSON response cache - key: filename, value: JSON response
+    private val jsonResponseCache = mutableMapOf<String, String>()
+
+    // Activity result launcher for file picker
+    private val createDocumentLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("audio/wav")
+    ) { uri: Uri? ->
+        uri?.let { exportWavFile(it) }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        // Check authentication before proceeding
+        if (!checkAuthentication()) {
+            navigateToLogin()
+            return
+        }
+        
+        setContentView(R.layout.activity_main)
+
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom); insets
+        }
+
+        if (Build.VERSION.SDK_INT < 33) {
+            Toast.makeText(
+                this, "Yêu cầu Android 13+ (API 33) để dùng EXTRA_AUDIO_SOURCE", Toast.LENGTH_LONG
+            ).show()
+        }
+
+        logScreenResolution()
+        initializeViews()
+        loadSettings()
+        loadJsonCacheFromFile()  // Load cached JSON responses
+        setupAudioService()
+        checkPermissions()
+    }
+    
+    private fun setupAudioService() {
+        // Create audio service connection
+        audioServiceConnection = AudioServiceConnection(this, this)
+        
+        // Set callback for when service connects
+        audioServiceConnection.setOnServiceConnectedListener { service ->
+            Log.d(TAG, "Audio service connected")
+            // Initialize speech recognition with user's language preference
+            val sharedPreferences = getSharedPreferences("SpeechSettings", MODE_PRIVATE)
+            val language = sharedPreferences.getString("language", "vi-VN") ?: "vi-VN"
+            service.initializeSpeechRecognition(language, offlineMode = true)
+        }
+        
+        // Bind to service
+        if (!audioServiceConnection.bindService()) {
+            Toast.makeText(this, "Failed to bind to audio service", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    /**
+     * Check if user is authenticated
+     * @return true if authenticated, false otherwise
+     */
+    private fun checkAuthentication(): Boolean {
+        val securePrefs = SecurePreferences(this)
+        return securePrefs.getAuthToken() != null
+    }
+    
+    /**
+     * Navigate to login screen
+     */
+    private fun navigateToLogin() {
+        val intent = Intent(this, LoginActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        startActivity(intent)
+        finish()
+    }
+
+    private fun loadSettings() {
+        val prefs = getSharedPreferences("AppSettings", MODE_PRIVATE)
+        val subtitlesEnabled = prefs.getBoolean("subtitles_enabled", false)
+        val annotationsEnabled = prefs.getBoolean("annotations_enabled", true)
+
+        isUpdatingUI = true
+        switchSubtitles.isChecked = subtitlesEnabled
+        switchAnnotations.isChecked = annotationsEnabled
+        scrollViewResults.visibility =
+            if (annotationsEnabled) View.VISIBLE else View.GONE
+        // Đảm bảo bottomLiveCaption khởi tạo đúng visibility theo setting
+        bottomLiveCaption.visibility =
+            if (subtitlesEnabled) View.VISIBLE else View.GONE
+        isUpdatingUI = false
+    }
+
+    private fun saveSettings() {
+        val prefs = getSharedPreferences("AppSettings", MODE_PRIVATE)
+        prefs.edit().apply {
+            putBoolean("subtitles_enabled", switchSubtitles.isChecked)
+            putBoolean("annotations_enabled", switchAnnotations.isChecked)
+            apply()
+        }
+    }
+
+    private fun initializeViews() {
+        startButton = findViewById(R.id.startButton)
+        pauseButton = findViewById(R.id.pauseButton)
+        stopButton = findViewById(R.id.stopButton)
+        downloadAudio = findViewById(R.id.downloadAudio)
+        downloadText = findViewById(R.id.downloadText)
+        tvResult = findViewById(R.id.tvResult)
+        bottomLiveCaption = findViewById(R.id.bottomLiveCaption)
+        rightControlsCard = findViewById(R.id.rightControlsCard)
+        btnMore = findViewById(R.id.btnMore)
+        switchSubtitles = findViewById(R.id.switchSubtitles)
+        switchAnnotations = findViewById(R.id.switchAnnotations)
+        scrollViewResults = findViewById(R.id.scrollViewResults)
+
+        // Wire start/pause/stop buttons
+        startButton.setOnClickListener {
+            startListening()
+            updatePlaybackButtons()
+        }
+
+        pauseButton.setOnClickListener {
+            // Pause = finalize current segment, stop recognizer
+            pauseRecording()
+            updatePlaybackButtons()
+        }
+
+        stopButton.setOnClickListener {
+            stopRecording()
+            updatePlaybackButtons()
+        }
+
+        downloadAudio.setOnClickListener {
+            showAudioFilesDialog()
+        }
+
+        downloadText.setOnClickListener {
+            // Show audio files selection dialog for upload to API
+            showAudioFilesForUploadDialog()
+        }
+        btnMore.setOnClickListener {
+            rightControlsCard.visibility =
+                if (rightControlsCard.visibility == View.VISIBLE) View.GONE
+                else View.VISIBLE
+        }
+        val btnClearResults = findViewById<ImageButton>(R.id.btnClearResults)
+        btnClearResults.setOnClickListener {
+            tvResult.text = getString(R.string.live_transcript_hint)
+            bottomLiveCaption.text = getString(R.string.live_caption_banner)
+            hasAddedNewLine = false
+            lastDisplayedPartialText = ""
+            audioServiceConnection.executeIfConnected { it.clearPartialText() }
+            Toast.makeText(this, "Results cleared", Toast.LENGTH_SHORT).show()
+        }
+        switchSubtitles.setOnCheckedChangeListener { _, isChecked ->
+            // Bỏ qua nếu đang update UI programmatically
+            if (isUpdatingUI) return@setOnCheckedChangeListener
+
+            // Switch phụ đề CHỈ control visibility, không control start/stop nữa
+            bottomLiveCaption.visibility =
+                if (isChecked) View.VISIBLE else View.GONE
+            saveSettings()
+        }
+        switchAnnotations.setOnCheckedChangeListener { _, isChecked ->
+            scrollViewResults.visibility =
+                if (isChecked) View.VISIBLE else View.GONE
+            saveSettings()
+        }
+
+        // Logout button (Đăng xuất)
+        val btnLogout = findViewById<MaterialButton>(R.id.btnLogout)
+        btnLogout.setOnClickListener {
+            // Perform logout in background
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val securePreferences = SecurePreferences(this@MainActivity)
+                    val deviceInfoProvider = DeviceInfoProvider(this@MainActivity)
+                    val apiService = RetrofitClient.createApiService(securePreferences)
+                    val authRepository =
+                        AuthRepository(apiService, securePreferences, deviceInfoProvider)
+
+                    authRepository.logout()
+
+                    // Navigate to login on main thread
+                    withContext(Dispatchers.Main) {
+                        val intent = Intent(this@MainActivity, LoginActivity::class.java)
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        startActivity(intent)
+                        finish()
+                    }
+                } catch (e: Exception) {
+                    // Show error on main thread
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Đăng xuất thất bại: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Speech recognizer is already initialized in setupManagers()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        saveSettings()
+        saveJsonCacheToFile()  // Save JSON cache to file
+    }
+
+
+
+    private fun checkPermissions() {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this, arrayOf(Manifest.permission.RECORD_AUDIO), RECORD_AUDIO_REQUEST_CODE
+            )
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == RECORD_AUDIO_REQUEST_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Permission granted", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(
+                    this, "Permission denied. Cannot use speech recognition.", Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private fun startListening() {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            try {
+                audioServiceConnection.executeIfConnected { service ->
+                    service.startRecording()
+                }
+                updateUI()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting session: ${e.message}")
+                Toast.makeText(this, "Error starting: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(this, "Audio permission not granted", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun getCurrentTime(): String =
+        SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+
+    private fun updateUI() {
+        isUpdatingUI = true
+        
+        audioServiceConnection.executeIfConnected { service ->
+            val isListening = service.isListening()
+            
+            if (isListening) {
+                val audioStatus = service.getCurrentAudioStatus()
+                if (audioStatus.isEmpty()) {
+                    bottomLiveCaption.text = "ĐANG NGHE..."
+                }
+            } else {
+                bottomLiveCaption.text = getString(R.string.live_caption_banner)
+            }
+        }
+        
+        isUpdatingUI = false
+    }
+
+    private fun updatePlaybackButtons() {
+        runOnUiThread {
+            audioServiceConnection.executeIfConnected { service ->
+                val isListening = service.isListening()
+                val isPaused = service.isPaused()
+                
+                if (isListening && !isPaused) {
+                    startButton.visibility = View.GONE
+                    pauseButton.visibility = View.VISIBLE
+                    stopButton.visibility = View.VISIBLE
+                } else if (isPaused) {
+                    startButton.visibility = View.VISIBLE
+                    pauseButton.visibility = View.GONE
+                    stopButton.visibility = View.VISIBLE
+                } else {
+                    startButton.visibility = View.VISIBLE
+                    pauseButton.visibility = View.GONE
+                    stopButton.visibility = View.GONE
+                }
+            }
+        }
+    }
+
+    // ===== SpeechRecognitionManager.SpeechRecognitionCallbacks =====
+    override fun onRecognitionStarted() {
+        runOnUiThread { 
+            updateUI()
+            updatePlaybackButtons()
+        }
+    }
+
+    override fun onRecognitionStopped() {
+        runOnUiThread {
+            updateUI()
+            bottomLiveCaption.text = getString(R.string.live_caption_banner)
+            updatePlaybackButtons()
+        }
+    }
+
+    override fun onRecognitionRestart() {
+        // Service handles restart automatically
+    }
+
+    override fun onReadyForSpeech() {
+        Log.d(TAG, "SpeechRecognizer ready for speech")
+    }
+
+    override fun onBeginningOfSpeech() {
+        Log.d(TAG, "Beginning of speech detected")
+        // Reset for new speech segment
+        lastDisplayedPartialText = ""
+    }
+
+    override fun onEndOfSpeech(finalPartialText: String) {
+        runOnUiThread {
+            if (finalPartialText.isEmpty()) {
+                val currentText = tvResult.text.toString()
+                val timestampPattern = "\\n\\[\\d{2}:\\d{2}:\\d{2}\\] $".toRegex()
+                if (timestampPattern.containsMatchIn(currentText)) {
+                    tvResult.text = currentText.replace(timestampPattern, "")
+                    Log.d(TAG, "Removed empty timestamp")
+                }
+            } else {
+                Log.d(TAG, "Speech segment finalized with text: $finalPartialText")
+            }
+            // Reset after speech segment ends
+            lastDisplayedPartialText = ""
+        }
+    }
+
+    override fun onRmsChanged(rmsdB: Float) {
+        // Handled by WavRecordingManager
+    }
+
+    override fun onRecognitionError(errorCode: Int, errorMessage: String) {
+        runOnUiThread {
+            audioServiceConnection.executeIfConnected { service ->
+                if (service.isSpeechRecognizerReady()) {
+                    bottomLiveCaption.text = errorMessage
+                }
+            }
+            updateUI()
+        }
+    }
+
+    override fun onFinalResults(results: List<String>) {
+        Log.i(TAG, "Final results: $results")
+    }
+
+    override fun onPartialResults(partialText: String) {
+        runOnUiThread {
+            bottomLiveCaption.text = partialText
+            updateScrollViewWithPartial(partialText)
+        }
+    }
+
+    override fun onPartialTextFinalized(text: String) {
+        runOnUiThread {
+            val currentText = tvResult.text.toString()
+            if (!currentText.endsWith(" ")) {
+                tvResult.text = "$currentText "
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            saveJsonCacheToFile()
+            audioServiceConnection.unbindService()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in onDestroy: ${e.message}")
+        }
+    }
+    
+    // ===== WavRecordingManager.WavRecordingCallbacks =====
+    override fun onSessionStarted(sessionName: String) {
+        Log.i(TAG, "Recording session started: $sessionName")
+        prepareScrollViewForNewSession()
+    }
+
+    override fun onSessionResumed() {
+        Log.i(TAG, "Recording session resumed")
+    }
+
+    override fun onSessionPaused(segmentIndex: Int) {
+        runOnUiThread {
+            bottomLiveCaption.text = "TẠM DỪNG"
+            Toast.makeText(
+                this,
+                "Đã tạm dừng - Segment $segmentIndex đã lưu",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    override fun onSessionStopped(sessionName: String?) {
+        Log.i(TAG, "Recording session stopped: $sessionName")
+    }
+
+    override fun onSegmentFinalized(file: File, segmentIndex: Int) {
+        Log.i(TAG, "Segment $segmentIndex finalized: ${file.name}")
+    }
+
+    override fun onSegmentsMerged(mergedFile: File, segmentCount: Int) {
+        runOnUiThread {
+            Toast.makeText(
+                this,
+                "Đã gộp $segmentCount segments thành ${mergedFile.name}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    override fun onAudioLevelChanged(rmsDb: Float) {
+        // Audio level monitoring handled by WavRecordingManager
+    }
+
+    override fun onAudioStatusChanged(status: String) {
+        // Could update UI with audio status if needed
+        // runOnUiThread {
+        //     if (speechRecognitionManager.currentPartialText.isEmpty()) {
+        //         bottomLiveCaption.text = status
+        //     }
+        // }
+    }
+
+    override fun onError(message: String) {
+        Log.e(TAG, "Recording error: $message")
+        runOnUiThread {
+            Toast.makeText(this, "Error: $message", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun addResultToLog(recognizedText: String) = runOnUiThread {
+        val t = getCurrentTime()
+        val cur = tvResult.text.toString()
+        // Nếu đang có partial text thì replace nó với final result
+        audioServiceConnection.executeIfConnected { service ->
+            if (service.isListening() && lastDisplayedPartialText.isNotEmpty()) {
+                // Replace partial text với final result
+                val newText = cur.replace(lastDisplayedPartialText, recognizedText)
+                tvResult.text = newText
+                lastDisplayedPartialText = ""
+                service.clearPartialText()
+            } else {
+                // Logic cũ cho trường hợp không có partial
+                tvResult.text =
+                    if (cur.contains(getString(R.string.live_transcript_hint)) || cur.trim().isEmpty()
+                    ) "[$t] $recognizedText" else "$cur\n\n[$t] $recognizedText"
+                lastDisplayedPartialText = ""
+            }
+        }
+        // auto-scroll xuống cuối
+        scrollViewResults.post { scrollViewResults.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun logScreenResolution() {
+        try {
+            val dm = DisplayMetrics()
+            @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(dm)
+            val width = dm.widthPixels;
+            val height = dm.heightPixels;
+            val density = dm.density
+            Log.i(
+                TAG,
+                "Resolution: ${width}x${height}, dp: ${(width / density).toInt()}x${(height / density).toInt()}"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Screen info error: ${e.message}")
+        }
+    }
+
+    // ==== ScrollView real-time update ====
+    private var hasAddedNewLine = false
+    private var lastDisplayedPartialText = ""  // Track what's currently displayed in tvResult
+
+    private fun prepareScrollViewForNewSession() {
+        val currentText = tvResult.text.toString()
+        lastDisplayedPartialText = ""  // Reset for new session
+        if (currentText.isNotEmpty() && !currentText.contains(getString(R.string.live_transcript_hint))) {
+            runOnUiThread {
+                tvResult.text = "$currentText\n\n[${getCurrentTime()}] "
+                hasAddedNewLine = true
+                scrollViewResults.post { scrollViewResults.fullScroll(View.FOCUS_DOWN) }
+            }
+        } else {
+            runOnUiThread {
+                tvResult.text = "[${getCurrentTime()}] "
+                hasAddedNewLine = true
+            }
+        }
+    }
+
+    private fun updateScrollViewWithPartial(partialText: String) {
+        Log.d(TAG, ">>> updateScrollViewWithPartial called")
+        Log.d(TAG, "  Input partialText: '$partialText'")
+
+        if (partialText.isEmpty() || partialText.isBlank()) {
+            Log.d(TAG, "  Skipped: partialText is empty or blank")
+            return
+        }
+
+        runOnUiThread {
+            val currentText = tvResult.text.toString()
+            Log.d(TAG, "  Current tvResult text: '$currentText'")
+            Log.d(TAG, "  Last displayed partial text: '$lastDisplayedPartialText'")
+
+            if (currentText.isEmpty() || currentText.contains(getString(R.string.live_transcript_hint))) {
+                Log.d(TAG, "  BRANCH: Initialize with timestamp")
+                val newText = "[${getCurrentTime()}] $partialText"
+                tvResult.text = newText
+                lastDisplayedPartialText = partialText
+                Log.d(TAG, "  Result: '$newText'")
+                scrollViewResults.post { scrollViewResults.fullScroll(View.FOCUS_DOWN) }
+                return@runOnUiThread
+            }
+
+            if (lastDisplayedPartialText.isNotEmpty()) {
+                Log.d(TAG, "  BRANCH: Replace existing partial text")
+                val lastTimestampIndex = currentText.lastIndexOf("[")
+                Log.d(TAG, "    lastTimestampIndex: $lastTimestampIndex")
+                if (lastTimestampIndex >= 0) {
+                    val timestampEndIndex = currentText.indexOf("]", lastTimestampIndex)
+                    Log.d(TAG, "    timestampEndIndex: $timestampEndIndex")
+                    if (timestampEndIndex >= 0) {
+                        val beforeTimestamp = currentText.substring(0, timestampEndIndex + 2)
+                        val newText = "$beforeTimestamp$partialText"
+                        Log.d(TAG, "    Replacing with timestamp method")
+                        Log.d(TAG, "    beforeTimestamp: '$beforeTimestamp'")
+                        Log.d(TAG, "    newText: '$newText'")
+                        tvResult.text = newText
+                        lastDisplayedPartialText = partialText
+                    } else {
+                        val newText = currentText.replace(lastDisplayedPartialText, partialText)
+                        if (newText.isNotEmpty()) {
+                            tvResult.text = newText
+                            lastDisplayedPartialText = partialText
+                        }
+                    }
+                } else {
+                    val newText = currentText.replace(lastDisplayedPartialText, partialText)
+                    if (newText.isNotEmpty()) {
+                        tvResult.text = newText
+                        lastDisplayedPartialText = partialText
+                    }
+                }
+            } else {
+                Log.d(TAG, "  BRANCH: First partial text (currentPartialText is empty)")
+                Log.d(TAG, "    Creating new timestamp")
+                val newText = if (currentText.isNotEmpty() && !currentText.endsWith("\n")) {
+                    "$currentText\n[${getCurrentTime()}] $partialText"
+                } else if (currentText.endsWith("\n")) {
+                    "$currentText[${getCurrentTime()}] $partialText"
+                } else {
+                    "[${getCurrentTime()}] $partialText"
+                }
+                Log.d(TAG, "    New text with timestamp: '$newText'")
+                tvResult.text = newText
+                lastDisplayedPartialText = partialText
+            }
+
+            Log.d(TAG, "  Final tvResult: '${tvResult.text}'")
+            Log.d(TAG, "<<< updateScrollViewWithPartial done")
+
+            scrollViewResults.post { scrollViewResults.fullScroll(View.FOCUS_DOWN) }
+        }
+    }
+
+    // ==== JSON cache persistence ====
+    private fun saveJsonCacheToFile() {
+        try {
+            val cacheFile = File(filesDir, "json_cache.txt")
+            cacheFile.bufferedWriter().use { writer ->
+                jsonResponseCache.forEach { (fileName, jsonResponse) ->
+                    // Format: filename|jsonLength|jsonContent
+                    val jsonLength = jsonResponse.length
+                    writer.write("$fileName|$jsonLength|$jsonResponse\n")
+                }
+            }
+            Log.i(TAG, "Saved JSON cache to file: ${jsonResponseCache.size} entries")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving JSON cache: ${e.message}", e)
+        }
+    }
+    
+    private fun loadJsonCacheFromFile() {
+        try {
+            val cacheFile = File(filesDir, "json_cache.txt")
+            if (!cacheFile.exists()) {
+                Log.i(TAG, "No JSON cache file found")
+                return
+            }
+            
+            jsonResponseCache.clear()
+            cacheFile.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    try {
+                        // Parse: filename|jsonLength|jsonContent
+                        val firstPipe = line.indexOf('|')
+                        val secondPipe = line.indexOf('|', firstPipe + 1)
+                        
+                        if (firstPipe > 0 && secondPipe > firstPipe) {
+                            val fileName = line.substring(0, firstPipe)
+                            val jsonLength = line.substring(firstPipe + 1, secondPipe).toInt()
+                            val jsonContent = line.substring(secondPipe + 1)
+                            
+                            // Verify length matches
+                            if (jsonContent.length == jsonLength) {
+                                jsonResponseCache[fileName] = jsonContent
+                            } else {
+                                Log.w(TAG, "JSON length mismatch for $fileName: expected $jsonLength, got ${jsonContent.length}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error parsing cache line: ${e.message}")
+                    }
+                }
+            }
+            Log.i(TAG, "Loaded JSON cache from file: ${jsonResponseCache.size} entries")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading JSON cache: ${e.message}", e)
+        }
+    }
+    
+    // ==== Audio file export ====
+    private fun showAudioFilesDialog() {
+        val wavFiles = getWavFiles()
+
+        if (wavFiles.isEmpty()) {
+            Toast.makeText(this, "Không có file audio nào", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Tạo danh sách hiển thị với tên file và kích thước
+        val fileNames = wavFiles.map { file ->
+            val sizeMB = file.length() / (1024.0 * 1024.0)
+            "${file.name} (${String.format("%.2f", sizeMB)} MB)"
+        }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Chọn file audio để tải về")
+            .setItems(fileNames) { _, which ->
+                selectedWavFileToExport = wavFiles[which]
+                // Mở file picker để chọn nơi lưu
+                val timestamp =
+                    SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                createDocumentLauncher.launch("recording_$timestamp.wav")
+            }
+            .setNegativeButton("Hủy", null)
+            .show()
+    }
+
+    private fun getWavFiles(): List<File> {
+        return filesDir.listFiles { file ->
+            file.extension == "wav" && file.name.startsWith("STT_")
+        }?.sortedByDescending { it.lastModified() } ?: emptyList()
+    }
+
+    private fun showAudioFilesForUploadDialog() {
+        val wavFiles = getWavFiles()
+
+        if (wavFiles.isEmpty()) {
+            Toast.makeText(this, "Không có file audio nào", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Tạo danh sách hiển thị với tên file, kích thước, và trạng thái cache
+        val fileNames = wavFiles.map { file ->
+            val sizeMB = file.length() / (1024.0 * 1024.0)
+            val cacheStatus = if (jsonResponseCache.containsKey(file.name)) " ✓" else ""
+            "${file.name} (${String.format("%.2f", sizeMB)} MB)$cacheStatus"
+        }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Chọn audio để tải lên")
+            .setItems(fileNames) { _, which ->
+                val selectedFile = wavFiles[which]
+                // Kiểm tra cache trước
+                if (jsonResponseCache.containsKey(selectedFile.name)) {
+                    // Có cache rồi, hiện luôn
+                    showTranscriptionResult(selectedFile.name, jsonResponseCache[selectedFile.name]!!)
+                } else {
+                    // Chưa có cache, upload lên API
+                    uploadAudioFileToAPI(selectedFile)
+                }
+            }
+            .setNegativeButton("Hủy", null)
+            .show()
+    }
+
+    private fun exportWavFile(destUri: Uri) {
+        val sourceFile = selectedWavFileToExport ?: return
+
+        try {
+            contentResolver.openOutputStream(destUri)?.use { outputStream ->
+                FileInputStream(sourceFile).use { inputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+            Toast.makeText(
+                this,
+                "Đã lưu file: ${sourceFile.name}",
+                Toast.LENGTH_LONG
+            ).show()
+            Log.i(TAG, "Exported WAV file to: $destUri")
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Lỗi khi lưu file: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+            Log.e(TAG, "Error exporting WAV file", e)
+        }
+    }
+
+    // ==== Audio upload to API ====
+    private fun uploadAudioFileToAPI(audioFile: File) {
+        val progressDialog = ProgressDialog(this).apply {
+            setMessage("Đang upload và xử lý file audio...")
+            setCancelable(false)
+            show()
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // Read file
+                val inputStream = FileInputStream(audioFile)
+
+                val boundary = "----WebKitFormBoundary" + System.currentTimeMillis()
+                val url = URL("http://14.224.199.187:9223/v1/pipeline")
+                val connection = url.openConnection() as HttpURLConnection
+
+                connection.apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    doInput = true
+                    setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                    connectTimeout = 30000
+                    readTimeout = 120000  // 2 minutes timeout for processing
+                }
+
+                // Get filename
+                val fileName = audioFile.name
+
+                connection.outputStream.use { outputStream ->
+                    val writer = outputStream.bufferedWriter()
+
+                    // Write multipart form data
+                    writer.write("--$boundary\r\n")
+                    writer.write("Content-Disposition: form-data; name=\"audio_file\"; filename=\"$fileName\"\r\n")
+                    writer.write("Content-Type: audio/*\r\n\r\n")
+                    writer.flush()
+                    
+                    // Copy file data
+                    inputStream.copyTo(outputStream)
+                    inputStream.close()
+
+                    writer.write("\r\n")
+                    writer.write("--$boundary--\r\n")
+                    writer.flush()
+                }
+
+                // Read response
+                val responseCode = connection.responseCode
+                val response =
+                    if (responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_CREATED) {
+                        connection.inputStream.bufferedReader().use { it.readText() }
+                    } else {
+                        val errorStream =
+                            connection.errorStream?.bufferedReader()?.use { it.readText() }
+                        throw Exception("HTTP Error $responseCode: $errorStream")
+                    }
+
+                connection.disconnect()
+
+                withContext(Dispatchers.Main) {
+                    progressDialog.dismiss()
+                    // Lưu response vào cache
+                    jsonResponseCache[audioFile.name] = response
+                    saveJsonCacheToFile()  // Persist cache immediately
+                    showTranscriptionResult(audioFile.name, response)
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error uploading audio file", e)
+                withContext(Dispatchers.Main) {
+                    progressDialog.dismiss()
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Lỗi: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun showTranscriptionResult(fileName: String, jsonResponse: String) {
+        // Parse JSON và lấy summary.raw
+        val displayText = try {
+            val jsonObject = JSONObject(jsonResponse)
+            if (jsonObject.has("summary")) {
+                val summary = jsonObject.getJSONObject("summary")
+                if (summary.has("raw")) {
+                    summary.getString("raw")
+                } else {
+                    "Không tìm thấy 'raw' trong 'summary'"
+                }
+            } else {
+                "Không tìm thấy 'summary' trong JSON response"
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing JSON: ${e.message}")
+            "Lỗi parse JSON: ${e.message}\n\nFull response:\n$jsonResponse"
+        }
+        
+        // Tạo ScrollView với TextView bên trong để hiển thị text
+        val scrollView = ScrollView(this)
+        val textView = TextView(this).apply {
+            text = displayText
+            setPadding(40, 20, 40, 20)
+            textSize = 16f
+            setTextIsSelectable(true)  // Cho phép select text
+        }
+        scrollView.addView(textView)
+
+        AlertDialog.Builder(this)
+            .setTitle("Kết quả nhận dạng - $fileName")
+            .setView(scrollView)
+            .setPositiveButton("Copy") { _, _ ->
+                val clipboard =
+                    getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("Transcription", displayText)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "Đã copy vào clipboard", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("JSON gốc") { _, _ ->
+                // Hiển thị full JSON trong 1 dialog khác
+                showFullJsonDialog(fileName, jsonResponse)
+            }
+            .setNegativeButton("Đóng", null)
+            .show()
+    }
+    
+    private fun showFullJsonDialog(fileName: String, jsonResponse: String) {
+        val scrollView = ScrollView(this)
+        val textView = TextView(this).apply {
+            text = jsonResponse
+            setPadding(40, 20, 40, 20)
+            textSize = 14f
+            setTextIsSelectable(true)
+            typeface = Typeface.MONOSPACE
+        }
+        scrollView.addView(textView)
+        
+        AlertDialog.Builder(this)
+            .setTitle("JSON đầy đủ - $fileName")
+            .setView(scrollView)
+            .setPositiveButton("Copy") { _, _ ->
+                val clipboard =
+                    getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("Full JSON", jsonResponse)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "Đã copy JSON vào clipboard", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("Trở lại") { _, _ ->
+                // Quay lại dialog summary.raw
+                showTranscriptionResult(fileName, jsonResponse)
+            }
+            .setNegativeButton("Đóng", null)
+            .show()
+    }
+
+
+
+    private fun pauseRecording() {
+        try {
+            audioServiceConnection.executeIfConnected { service ->
+                service.pauseRecording()
+            }
+            runOnUiThread {
+                updateUI()
+                updatePlaybackButtons()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error pausing recording: ${e.message}")
+        }
+    }
+
+    private fun stopRecording() {
+        try {
+            audioServiceConnection.executeIfConnected { service ->
+                service.stopRecording()
+            }
+            runOnUiThread {
+                updateUI()
+                updatePlaybackButtons()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping recording: ${e.message}")
+        }
+    }
+
+}

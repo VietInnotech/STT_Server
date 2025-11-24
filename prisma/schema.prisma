@@ -1,0 +1,345 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// File origin enum for text uploads
+enum FileOrigin {
+  web
+  android
+}
+
+// ============================================
+// USER MANAGEMENT & AUTHENTICATION
+// ============================================
+
+// Roles table for RBAC
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique // admin, user, viewer
+  description String?
+  permissions Json // Store permissions as JSON array
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users User[]
+
+  @@map("roles")
+}
+
+// Users table (synced with Keycloak or standalone)
+model User {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  email        String    @unique
+  passwordHash String? // For local auth (bcrypt), null if using Keycloak only
+  fullName     String?
+  roleId       String
+  role         Role      @relation(fields: [roleId], references: [id])
+  isActive     Boolean   @default(true)
+  lastLogin    DateTime?
+
+  // Two-Factor Authentication
+  totpEnabled    Boolean @default(false) // Whether 2FA is enabled for this user
+  totpSecret     String? // Encrypted TOTP secret (only set when 2FA is enabled)
+  backupCodes    String? // Encrypted JSON array of backup codes
+  trustedDevices Json? // JSON array of device fingerprints that have verified 2FA
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  uploadedAudioFiles AudioFile[]   @relation("UploadedBy")
+  uploadedTextFiles  TextFile[]    @relation("UploadedBy")
+  uploadedFilePairs  TextFilePair[]
+  auditLogs          AuditLog[]
+  sessions           Session[]
+  settings           UserSettings?
+  templates          Template[]
+
+  @@index([username])
+  @@index([email])
+  @@index([roleId])
+  @@map("users")
+}
+
+// Sessions table for active user sessions
+model Session {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token             String   @unique // JWT or session token
+  ipAddress         String?
+  userAgent         String?
+  deviceFingerprint String?  @unique // Unique device identifier to enforce one account per device
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// User settings and preferences
+model UserSettings {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // File Management Preferences
+  defaultDeleteAfterDays Int? // Default auto-delete period for uploaded files (null = never delete)
+
+  // UI Preferences (expandable for future settings)
+  theme    String? @default("light")
+  language String? @default("en")
+  timezone String?
+
+  // Default template selected by the user (optional)
+  defaultTemplateId String?
+  defaultTemplate   Template? @relation(fields: [defaultTemplateId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("user_settings")
+}
+
+// ============================================
+// DEVICE MANAGEMENT
+// ============================================
+
+// Android devices table
+model Device {
+  id             String   @id @default(uuid())
+  deviceName     String // Custom name or model
+  deviceId       String   @unique // Android device ID
+  ipAddress      String?
+  macAddress     String?
+  androidVersion String?
+  appVersion     String?
+  isOnline       Boolean  @default(false)
+  lastSeen       DateTime @default(now())
+  registeredAt   DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  audioFiles    AudioFile[]
+  textFiles     TextFile[]
+  uptimeHistory UptimeHistory[]
+
+  @@index([deviceId])
+  @@index([isOnline])
+  @@index([lastSeen])
+  @@map("devices")
+}
+
+// Uptime history for devices
+model UptimeHistory {
+  id        String   @id @default(uuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  status    String // online, offline, disconnected
+  timestamp DateTime @default(now())
+
+  @@index([deviceId])
+  @@index([timestamp])
+  @@map("uptime_history")
+}
+
+// ============================================
+// FILE STORAGE (WITH ENCRYPTED DATA)
+// ============================================
+
+// Audio files table - stores encrypted audio data in database
+model AudioFile {
+  id            String @id @default(uuid())
+  filename      String
+  originalName  String // Original filename from upload
+  fileSize      Int // Original file size (bytes)
+  encryptedData Bytes // Encrypted file content stored in DB
+  encryptedIV   String // Initialization vector for AES encryption
+  mimeType      String @default("audio/wav")
+  duration      Float? // Audio duration in seconds
+  sampleRate    Int? // Sample rate (Hz)
+  channels      Int? // Number of audio channels
+  bitrate       Int? // Bitrate (kbps)
+
+  // Metadata
+  deviceId     String?
+  device       Device? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  uploadedById String?
+  uploadedBy   User?   @relation("UploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  // Auto-delete configuration
+  deleteAfterDays   Int? // Auto-delete after N days (null = never delete)
+  scheduledDeleteAt DateTime? // When to delete this file
+
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([uploadedAt])
+  @@index([deviceId])
+  @@index([uploadedById])
+  @@index([scheduledDeleteAt])
+  @@map("audio_files")
+}
+
+// Text files table - stores encrypted text data in database
+model TextFile {
+  id            String @id @default(uuid())
+  filename      String
+  originalName  String // Original filename from upload
+  fileSize      Int // Original file size (bytes)
+  encryptedData Bytes // Encrypted file content stored in DB
+  encryptedIV   String // Initialization vector for AES encryption
+  mimeType      String @default("text/plain")
+  encoding      String @default("utf-8")
+  lineCount     Int? // Number of lines in text file
+  wordCount     Int? // Number of words
+  
+  // Origin of the text upload - web (user) or android (app)
+  origin        FileOrigin @default(web)
+
+  // If uploaded from Android app, parsed structured payload may be stored here
+  androidSummary Json?
+  androidRealtime Json?
+
+  // Metadata
+  deviceId     String?
+  device       Device? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  uploadedById String?
+  uploadedBy   User?   @relation("UploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  // Auto-delete configuration
+  deleteAfterDays   Int? // Auto-delete after N days (null = never delete)
+  scheduledDeleteAt DateTime? // When to delete this file
+
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations for TextFilePair
+  asummaryFile  TextFilePair?  @relation("SummaryFile")
+  arealtimeFile TextFilePair?  @relation("RealtimeFile")
+
+  @@index([uploadedAt])
+  @@index([deviceId])
+  @@index([uploadedById])
+  @@index([scheduledDeleteAt])
+  @@map("text_files")
+}
+
+// Text file pairs - links summary and realtime text files for comparison
+model TextFilePair {
+  id              String   @id @default(uuid())
+  name            String? // Optional name for the pair (e.g., "Analysis 2025-11-20")
+  
+  // Foreign keys for the pair
+  summaryFileId   String   @unique
+  summaryFile     TextFile @relation("SummaryFile", fields: [summaryFileId], references: [id], onDelete: Cascade)
+  
+  realtimeFileId  String   @unique
+  realtimeFile    TextFile @relation("RealtimeFile", fields: [realtimeFileId], references: [id], onDelete: Cascade)
+  
+  // Metadata
+  uploadedById    String?
+  uploadedBy      User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  
+  // Auto-delete configuration (synchronized with both files)
+  deleteAfterDays   Int? // Auto-delete pair after N days (null = never delete)
+  scheduledDeleteAt DateTime? // When to delete this pair
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([uploadedById])
+  @@index([createdAt])
+  @@index([scheduledDeleteAt])
+  @@map("text_file_pairs")
+}
+
+// ============================================
+// AUDIT LOGGING
+// ============================================
+
+// Audit log table - track all user actions
+model AuditLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action       String // login, logout, upload, view, edit, delete, admin_action, etc.
+  resource     String? // Resource type: user, file, device, role, etc.
+  resourceId   String? // ID of the resource affected
+  details      Json? // Additional details as JSON
+  ipAddress    String?
+  userAgent    String?
+  success      Boolean  @default(true)
+  errorMessage String?
+  timestamp    DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+// ============================================
+// SYSTEM CONFIGURATION
+// ============================================
+
+// System settings table
+model SystemConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique // config key (e.g., "auto_delete_days", "max_file_size")
+  value       String // config value (stored as string, parse as needed)
+  description String?
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+
+  @@map("system_config")
+}
+
+// File sharing table - records which user a file has been shared with
+model FileShare {
+  id            String   @id @default(uuid())
+  fileId        String   // ID of the file (AudioFile.id or TextFile.id)
+  fileType      String   // 'audio' or 'text'
+  sharedById    String?  // user who performed the share (may be null if system)
+  sharedWithId  String   // recipient user id
+  // Optional expiry for the share
+  expiresInDays Int?
+  expiresAt     DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([sharedWithId])
+  @@index([fileId])
+  @@map("file_shares")
+}
+
+// Templates for user or system use. System templates available to all users; user templates scoped to owner.
+model Template {
+  id        String   @id @default(uuid())
+  name      String
+  content   String   // Template body/content (JSON or plain text)
+  ownerType String   // 'system' or 'user'
+  ownerId   String?  // If ownerType == 'user', reference to User.id
+  owner     User?    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Optional back relation if users choose this as their default template
+  userSettingsDefaults UserSettings[]
+
+  @@index([ownerId])
+  @@map("templates")
+}
