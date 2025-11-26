@@ -1,0 +1,14 @@
+{
+  "title": "Bảng điều khiển",
+  "totalDevices": "Tổng thiết bị",
+  "onlineDevices": "Thiết bị trực tuyến",
+  "totalFiles": "Tổng tệp tin",
+  "storageUsed": "Dung lượng sử dụng",
+  "filesUploadedToday": "Tệp tải lên hôm nay",
+  "deviceEvents24h": "Sự kiện thiết bị (24h)",
+  "totalUsers": "Tổng người dùng",
+  "recentActivity": "Hoạt động gần đây",
+  "noRecentActivity": "Không có hoạt động gần đây",
+  "loadingDashboard": "Đang tải bảng điều khiển...",
+  "failedToLoadStats": "Không thể tải thống kê"
+}

@@ -1,4 +1,4 @@
-import { Outlet, Link, useLocation } from 'react-router-dom'
+import { Outlet, Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   Smartphone,
@@ -7,108 +7,105 @@ import {
   Settings,
   LogOut,
   Menu,
-  X
-} from 'lucide-react'
-import { useState, useEffect } from 'react'
-import { useAuthStore } from '../stores/auth'
-import { useSocketStore } from '../stores/socket'
-import { cn } from '../lib/utils'
-import Modal from './Modal'
+  X,
+} from "lucide-react";
+import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import { useAuthStore } from "../stores/auth";
+import { useSocketStore } from "../stores/socket";
+import { cn } from "../lib/utils";
+import Modal from "./Modal";
 
 const baseNavigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Devices', href: '/devices', icon: Smartphone },
-  { name: 'Files', href: '/files', icon: FileAudio },
-  { name: 'Templates', href: '/templates', icon: FileAudio },
-]
+  { name: "nav.dashboard", href: "/", icon: LayoutDashboard },
+  { name: "nav.devices", href: "/devices", icon: Smartphone },
+  { name: "nav.files", href: "/files", icon: FileAudio },
+  { name: "nav.templates", href: "/templates", icon: FileAudio },
+];
 
-const adminNavigation = [
-  { name: 'Users', href: '/users', icon: Users },
-]
+const adminNavigation = [{ name: "nav.users", href: "/users", icon: Users }];
 
 export default function Layout() {
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const location = useLocation()
-  const logout = useAuthStore((state) => state.logout)
-  const disconnect = useSocketStore((state) => state.disconnect)
-  const connected = useSocketStore((state) => state.connected)
-  const user = useAuthStore((state) => state.user)
-  const kickedMessage = useAuthStore((state) => state.kickedMessage)
-  const setKickedMessage = useAuthStore((state) => state.setKickedMessage)
+  const { t } = useTranslation("common");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
+  const logout = useAuthStore((state) => state.logout);
+  const disconnect = useSocketStore((state) => state.disconnect);
+  const connected = useSocketStore((state) => state.connected);
+  const user = useAuthStore((state) => state.user);
+  const kickedMessage = useAuthStore((state) => state.kickedMessage);
+  const setKickedMessage = useAuthStore((state) => state.setKickedMessage);
   // Auto-logout timer ref
-  const [logoutTimerId, setLogoutTimerId] = useState<number | null>(null)
-  const [countdown, setCountdown] = useState<number>(5)
+  const [logoutTimerId, setLogoutTimerId] = useState<number | null>(null);
+  const [countdown, setCountdown] = useState<number>(5);
 
   const performLogout = () => {
     try {
-      disconnect()
+      disconnect();
     } catch {}
     try {
-      logout()
+      logout();
     } catch {}
-    setKickedMessage(null)
-    if (window.location.pathname !== '/login') window.location.href = '/login'
-  }
+    setKickedMessage(null);
+    if (window.location.pathname !== "/login") window.location.href = "/login";
+  };
 
   // Auto-logout effect: when kickedMessage becomes set, start a 5s timer to auto-logout.
   useEffect(() => {
-    if (typeof kickedMessage === 'string') {
+    if (typeof kickedMessage === "string") {
       // clear existing timer if any
       if (logoutTimerId) {
-        clearTimeout(logoutTimerId)
+        clearTimeout(logoutTimerId);
       }
       const id = window.setTimeout(() => {
-        performLogout()
-      }, 5000)
-      setLogoutTimerId(id)
+        performLogout();
+      }, 5000);
+      setLogoutTimerId(id);
       // start countdown interval
-      setCountdown(5)
+      setCountdown(5);
       const intervalId = window.setInterval(() => {
         setCountdown((c) => {
           if (c <= 1) {
-            clearInterval(intervalId)
-            return 0
+            clearInterval(intervalId);
+            return 0;
           }
-          return c - 1
-        })
-      }, 1000)
+          return c - 1;
+        });
+      }, 1000);
       return () => {
-        clearTimeout(id)
-        setLogoutTimerId(null)
-        clearInterval(intervalId)
-      }
+        clearTimeout(id);
+        setLogoutTimerId(null);
+        clearInterval(intervalId);
+      };
     } else {
       // If kickedMessage cleared, clear any pending timer
       if (logoutTimerId) {
-        clearTimeout(logoutTimerId)
-        setLogoutTimerId(null)
+        clearTimeout(logoutTimerId);
+        setLogoutTimerId(null);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kickedMessage])
+  }, [kickedMessage]);
 
   const handleLogout = () => {
-    disconnect()
-    logout()
-  }
+    disconnect();
+    logout();
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Sidebar */}
       <div
         className={cn(
-          'fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out lg:translate-x-0',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          "fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out lg:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
         <div className="flex h-full flex-col">
           {/* Logo */}
           <div className="flex h-16 items-center justify-between px-6 border-b">
-            <h1 className="text-xl font-bold text-gray-900">UNV AI Report</h1>
-            <button
-              onClick={() => setSidebarOpen(false)}
-              className="lg:hidden"
-            >
+            <h1 className="text-xl font-bold text-gray-900">{t("appName")}</h1>
+            <button onClick={() => setSidebarOpen(false)} className="lg:hidden">
               <X className="h-6 w-6" />
             </button>
           </div>
@@ -117,45 +114,46 @@ export default function Layout() {
           <nav className="flex-1 space-y-1 px-3 py-4">
             {/** Render base navigation for all authenticated users **/}
             {baseNavigation.map((item) => {
-              const isActive = location.pathname === item.href
+              const isActive = location.pathname === item.href;
               return (
                 <Link
                   key={item.name}
                   to={item.href}
                   onClick={() => setSidebarOpen(false)}
                   className={cn(
-                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                     isActive
-                      ? 'bg-blue-50 text-blue-600'
-                      : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                      ? "bg-blue-50 text-blue-600"
+                      : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
                   )}
                 >
                   <item.icon className="h-5 w-5" />
-                  {item.name}
+                  {t(item.name)}
                 </Link>
-              )
+              );
             })}
 
             {/** Admin-only nav **/}
-            {user?.role === 'admin' && adminNavigation.map((item) => {
-              const isActive = location.pathname === item.href
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  onClick={() => setSidebarOpen(false)}
-                  className={cn(
-                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                    isActive
-                      ? 'bg-blue-50 text-blue-600'
-                      : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
-                  )}
-                >
-                  <item.icon className="h-5 w-5" />
-                  {item.name}
-                </Link>
-              )
-            })}
+            {user?.role === "admin" &&
+              adminNavigation.map((item) => {
+                const isActive = location.pathname === item.href;
+                return (
+                  <Link
+                    key={item.name}
+                    to={item.href}
+                    onClick={() => setSidebarOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-blue-50 text-blue-600"
+                        : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
+                    )}
+                  >
+                    <item.icon className="h-5 w-5" />
+                    {t(item.name)}
+                  </Link>
+                );
+              })}
           </nav>
 
           {/* Sidebar footer - settings moved here so it appears at the bottom */}
@@ -164,14 +162,14 @@ export default function Layout() {
               to="/settings"
               onClick={() => setSidebarOpen(false)}
               className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                location.pathname === '/settings'
-                  ? 'bg-blue-50 text-blue-600'
-                  : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                location.pathname === "/settings"
+                  ? "bg-blue-50 text-blue-600"
+                  : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
               )}
             >
               <Settings className="h-5 w-5" />
-              Settings
+              {t("nav.settings")}
             </Link>
           </div>
         </div>
@@ -181,27 +179,35 @@ export default function Layout() {
       <div className="lg:pl-64">
         {/* Top bar */}
         <div className="sticky top-0 z-40 flex h-16 items-center gap-4 border-b bg-white px-4 shadow-sm lg:px-6">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="lg:hidden"
-          >
+          <button onClick={() => setSidebarOpen(true)} className="lg:hidden">
             <Menu className="h-6 w-6" />
           </button>
           <h2 className="text-lg font-semibold text-gray-900">
             {(() => {
-              const all = user?.role === 'admin' ? [...baseNavigation, ...adminNavigation] : baseNavigation
-              return all.find((it: any) => it.href === location.pathname)?.name || 'Dashboard'
+              if (location.pathname === "/settings") return t("nav.settings");
+              const all =
+                user?.role === "admin"
+                  ? [...baseNavigation, ...adminNavigation]
+                  : baseNavigation;
+              const found = all.find(
+                (it: any) => it.href === location.pathname
+              );
+              return found ? t(found.name) : t("nav.dashboard");
             })()}
           </h2>
           {/* Topbar right - user info and logout */}
           <div className="ml-auto flex items-center gap-4">
             <div className="flex items-center gap-3">
-              <div className={cn(
-                'h-2 w-2 rounded-full',
-                connected ? 'bg-green-500' : 'bg-red-500'
-              )} />
+              <div
+                className={cn(
+                  "h-2 w-2 rounded-full",
+                  connected ? "bg-green-500" : "bg-red-500"
+                )}
+              />
               <div className="text-sm text-right">
-                <div className="font-medium text-gray-900">{user?.username}</div>
+                <div className="font-medium text-gray-900">
+                  {user?.username}
+                </div>
                 <div className="text-xs text-gray-500">{user?.role}</div>
               </div>
             </div>
@@ -210,7 +216,7 @@ export default function Layout() {
               className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
             >
               <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Logout</span>
+              <span className="hidden sm:inline">{t("logout")}</span>
             </button>
           </div>
         </div>
@@ -223,16 +229,16 @@ export default function Layout() {
 
       {/* Kicked modal */}
       <>
-        {typeof kickedMessage === 'string' && (
+        {typeof kickedMessage === "string" && (
           <Modal
             open={true}
-            title="Đã đăng xuất"
+            title={t("loggedOut")}
             message={kickedMessage}
             confirmLabel={`OK (${countdown}s)`}
             showCancel={false}
             onClose={() => setKickedMessage(null)}
             onConfirm={() => {
-              performLogout()
+              performLogout();
             }}
           />
         )}
@@ -248,5 +254,5 @@ export default function Layout() {
         />
       )}
     </div>
-  )
+  );
 }

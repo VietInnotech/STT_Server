@@ -1,45 +1,51 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useAuthStore } from '../stores/auth'
-import { authApi } from '../lib/api'
-import { getDeviceFingerprint } from '../lib/utils'
-import toast from 'react-hot-toast'
-import { LogIn } from 'lucide-react'
-import TwoFactorVerifyModal from '../components/TwoFactorVerifyModal'
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { useAuthStore } from "../stores/auth";
+import { authApi } from "../lib/api";
+import { getDeviceFingerprint } from "../lib/utils";
+import toast from "react-hot-toast";
+import { LogIn } from "lucide-react";
+import TwoFactorVerifyModal from "../components/TwoFactorVerifyModal";
 
 export default function LoginPage() {
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
-  const login = useAuthStore((state) => state.login)
-  const navigate = useNavigate()
+  const { t } = useTranslation("auth");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const login = useAuthStore((state) => state.login);
+  const navigate = useNavigate();
 
   // 2FA state
-  const [show2FAModal, setShow2FAModal] = useState(false)
-  const [userId2FA, setUserId2FA] = useState('')
+  const [show2FAModal, setShow2FAModal] = useState(false);
+  const [userId2FA, setUserId2FA] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
+    e.preventDefault();
+    setLoading(true);
 
     try {
       // Call real API
-      const response = await authApi.login({ username, password, deviceFingerprint: getDeviceFingerprint() })
+      const response = await authApi.login({
+        username,
+        password,
+        deviceFingerprint: getDeviceFingerprint(),
+      });
 
       // Check if 2FA is required
       if (response.data.requires2FA && response.data.userId) {
-        setUserId2FA(response.data.userId)
-        setShow2FAModal(true)
-        setLoading(false)
-        return
+        setUserId2FA(response.data.userId);
+        setShow2FAModal(true);
+        setLoading(false);
+        return;
       }
 
-      const { user, token } = response.data
+      const { user, token } = response.data;
 
       // Validate required fields
       if (!user || !token) {
-        toast.error('Invalid login response')
-        return
+        toast.error(t("invalidResponse"));
+        return;
       }
 
       // Store user and token
@@ -52,20 +58,20 @@ export default function LoginPage() {
           fullName: user.fullName || undefined,
         },
         token
-      )
+      );
 
-      toast.success('Login successful!')
-      navigate('/')
+      toast.success(t("loginSuccess"));
+      navigate("/");
     } catch (error: any) {
-      const message = error.response?.data?.error || 'Login failed'
-      toast.error(message)
+      const message = error.response?.data?.error || t("loginFailed");
+      toast.error(message);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const handle2FASuccess = (data: { user: any; token: string }) => {
-    const { user, token } = data
+    const { user, token } = data;
 
     // Store user and token
     login(
@@ -77,11 +83,11 @@ export default function LoginPage() {
         fullName: user.fullName || undefined,
       },
       token
-    )
+    );
 
-    toast.success('Login successful!')
-    navigate('/')
-  }
+    toast.success(t("loginSuccess"));
+    navigate("/");
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100">
@@ -92,15 +98,18 @@ export default function LoginPage() {
               <LogIn className="h-8 w-8 text-blue-600" />
             </div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              UNV AI Report
+              {t("title")}
             </h1>
-            <p className="text-gray-500">Local Administration Panel</p>
+            <p className="text-gray-500">{t("subtitle")}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
-                Username
+              <label
+                htmlFor="username"
+                className="block text-sm font-medium text-gray-700 mb-2"
+              >
+                {t("username")}
               </label>
               <input
                 id="username"
@@ -109,13 +118,16 @@ export default function LoginPage() {
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Enter username"
+                placeholder={t("usernamePlaceholder")}
               />
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                Password
+              <label
+                htmlFor="password"
+                className="block text-sm font-medium text-gray-700 mb-2"
+              >
+                {t("password")}
               </label>
               <input
                 id="password"
@@ -124,7 +136,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Enter password"
+                placeholder={t("passwordPlaceholder")}
               />
             </div>
 
@@ -133,7 +145,7 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? t("signingIn") : t("signIn")}
             </button>
           </form>
         </div>
@@ -144,11 +156,11 @@ export default function LoginPage() {
         isOpen={show2FAModal}
         userId={userId2FA}
         onClose={() => {
-          setShow2FAModal(false)
-          setUserId2FA('')
+          setShow2FAModal(false);
+          setUserId2FA("");
         }}
         onSuccess={handle2FASuccess}
       />
     </div>
-  )
+  );
 }

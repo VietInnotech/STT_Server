@@ -1,94 +1,132 @@
-import { useState } from 'react'
-import Modal from './Modal'
-import { api } from '../lib/api'
-import toast from 'react-hot-toast'
-import { getDeviceFingerprint } from '../lib/utils'
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import Modal from "./Modal";
+import { api } from "../lib/api";
+import toast from "react-hot-toast";
+import { getDeviceFingerprint } from "../lib/utils";
 
 interface TwoFactorVerifyModalProps {
-  isOpen: boolean
-  userId: string
-  onClose: () => void
-  onSuccess: (data: { user: any; token: string }) => void
+  isOpen: boolean;
+  userId: string;
+  onClose: () => void;
+  onSuccess: (data: { user: any; token: string }) => void;
 }
 
 export default function TwoFactorVerifyModal({
   isOpen,
   userId,
   onClose,
-  onSuccess
+  onSuccess,
 }: TwoFactorVerifyModalProps) {
-  const [token, setToken] = useState<string>('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string>('')
-  const [useBackupCode, setUseBackupCode] = useState(false)
+  const { t } = useTranslation("auth");
+  const { t: tCommon } = useTranslation("common");
+  const [token, setToken] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>("");
+  const [useBackupCode, setUseBackupCode] = useState(false);
 
   const handleVerify = async () => {
     try {
-      setLoading(true)
-      setError('')
+      setLoading(true);
+      setError("");
 
       if (!token || (useBackupCode ? token.length < 8 : token.length !== 6)) {
-        setError(useBackupCode ? 'Please enter a valid backup code' : 'Please enter a valid 6-digit code')
-        return
+        setError(
+          useBackupCode
+            ? t("twoFactor.enterBackupCode")
+            : t("twoFactor.enter6Digit")
+        );
+        return;
       }
 
       // Get device fingerprint (same method as login)
-      const deviceFingerprint = getDeviceFingerprint()
+      const deviceFingerprint = getDeviceFingerprint();
 
-      const response = await api.post('/api/auth/2fa/verify', {
+      const response = await api.post("/api/auth/2fa/verify", {
         userId,
         token: token.trim(),
         deviceFingerprint,
-      })
+      });
 
-      toast.success('2FA verified successfully!')
-      onSuccess(response.data)
-      handleClose()
+      toast.success(t("twoFactor.verified"));
+      onSuccess(response.data);
+      handleClose();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Invalid verification code')
-      toast.error(err.response?.data?.error || 'Invalid verification code')
+      const msg = err.response?.data?.error || t("twoFactor.invalidCode");
+      setError(msg);
+      toast.error(msg);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const handleClose = () => {
-    setToken('')
-    setError('')
-    setUseBackupCode(false)
-    onClose()
-  }
+    setToken("");
+    setError("");
+    setUseBackupCode(false);
+    onClose();
+  };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Two-Factor Authentication" maxWidth="md">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title={t("twoFactor.title")}
+      maxWidth="md"
+      footer={
+        <div className="flex justify-end space-x-3">
+          <button
+            onClick={handleClose}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+          >
+            {tCommon("cancel")}
+          </button>
+          <button
+            onClick={handleVerify}
+            disabled={
+              loading ||
+              (!useBackupCode && token.length !== 6) ||
+              (useBackupCode && token.length < 8)
+            }
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? t("twoFactor.verifying") : t("twoFactor.verify")}
+          </button>
+        </div>
+      }
+    >
       <div className="space-y-4">
         <div className="space-y-2">
           <p className="text-sm text-gray-600">
             {useBackupCode
-              ? 'Enter one of your backup codes to verify your identity.'
-              : 'Enter the 6-digit code from your authenticator app to continue.'
-            }
+              ? t("twoFactor.backupDescription")
+              : t("twoFactor.description")}
           </p>
         </div>
 
         <div className="space-y-2">
           <label className="block text-sm font-medium text-gray-700">
-            {useBackupCode ? 'Backup Code' : 'Verification Code'}
+            {useBackupCode
+              ? t("twoFactor.backupCode")
+              : t("twoFactor.verificationCode")}
           </label>
           <input
             type="text"
             value={token}
             onChange={(e) => {
-              let value = e.target.value
+              let value = e.target.value;
               if (!useBackupCode) {
-                value = value.replace(/[^0-9]/g, '').slice(0, 6)
+                value = value.replace(/[^0-9]/g, "").slice(0, 6);
               } else {
-                value = value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 9)
+                value = value
+                  .toUpperCase()
+                  .replace(/[^A-Z0-9-]/g, "")
+                  .slice(0, 9);
               }
-              setToken(value)
-              setError('')
+              setToken(value);
+              setError("");
             }}
-            placeholder={useBackupCode ? 'XXXX-XXXX' : 'Enter 6-digit code'}
+            placeholder={useBackupCode ? "XXXX-XXXX" : t("twoFactor.enterCode")}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-2xl tracking-widest"
             maxLength={useBackupCode ? 9 : 6}
             autoComplete="off"
@@ -96,9 +134,8 @@ export default function TwoFactorVerifyModal({
           />
           <p className="text-xs text-gray-500">
             {useBackupCode
-              ? 'Enter your backup code (format: XXXX-XXXX)'
-              : 'Open your authenticator app and enter the 6-digit code'
-            }
+              ? t("twoFactor.enterBackupCode")
+              : t("twoFactor.description")}
           </p>
         </div>
 
@@ -111,32 +148,18 @@ export default function TwoFactorVerifyModal({
         <div className="flex items-center justify-center">
           <button
             onClick={() => {
-              setUseBackupCode(!useBackupCode)
-              setToken('')
-              setError('')
+              setUseBackupCode(!useBackupCode);
+              setToken("");
+              setError("");
             }}
             className="text-sm text-blue-600 hover:text-blue-700 underline"
           >
-            {useBackupCode ? 'Use authenticator code instead' : 'Use backup code instead'}
-          </button>
-        </div>
-
-        <div className="flex justify-end space-x-3 pt-2">
-          <button
-            onClick={handleClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleVerify}
-            disabled={loading || (!useBackupCode && token.length !== 6) || (useBackupCode && token.length < 8)}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Verifying...' : 'Verify'}
+            {useBackupCode
+              ? t("twoFactor.useAuthenticator")
+              : t("twoFactor.useBackupCode")}
           </button>
         </div>
       </div>
     </Modal>
-  )
+  );
 }

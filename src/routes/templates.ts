@@ -1,191 +1,284 @@
-import { Router } from 'express'
-import type { Request, Response } from 'express'
-import { prisma } from '../lib/prisma'
-import { authenticate, requireRole, type AuthRequest } from '../middleware/auth'
-import logger from '../lib/logger'
+import { Router } from "express";
+import type { Response } from "express";
+import { prisma } from "../lib/prisma";
+import {
+  authenticate,
+  requireRole,
+  type AuthRequest,
+} from "../middleware/auth";
+import {
+  maieApi,
+  handleMaieError,
+  type CreateTemplateDTO,
+  type UpdateTemplateDTO,
+} from "../services/maieApi";
 
-const router = Router()
+const router = Router();
 
-router.use(authenticate)
+router.use(authenticate);
 
 /**
- * GET /api/templates - list templates visible to the current user
+ * @swagger
+ * /api/templates:
+ *   get:
+ *     summary: List all templates
+ *     description: Retrieve all templates from the external MAIE API
+ *     tags: [Templates]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Templates retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 templates:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/MAIETemplate'
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: MAIE API error
  */
-router.get('/', async (req: AuthRequest, res: Response) => {
+router.get("/", async (req: AuthRequest, res: Response) => {
   try {
-  const userId = req.user!.userId
-  const userRole = req.user!.roleName
-
-    // System templates visible to all; user templates visible to owner and admins
-    const templates = await prisma.template.findMany({
-      where: {
-        OR: [
-          { ownerType: 'system' },
-          { ownerType: 'user', ownerId: userId },
-        ],
-      },
-      orderBy: { createdAt: 'desc' },
-    })
-
-    res.json({ templates })
+    const { data } = await maieApi.listTemplates();
+    // MAIE API returns { templates: [...] }, pass it through directly
+    res.json(data);
   } catch (err) {
-    logger.error('Failed to list templates', { err })
-    res.status(500).json({ error: 'Failed to list templates' })
+    const { status, error } = handleMaieError(err, "Failed to fetch templates");
+    res.status(status).json({ error });
   }
-})
+});
 
 /**
- * POST /api/templates - create template
- * - system templates: admin only
- * - user templates: any authenticated user (owner is current user)
+ * @swagger
+ * /api/templates/{id}:
+ *   get:
+ *     summary: Get template detail
+ *     description: Retrieve detailed information about a specific template including prompt_template and schema_data
+ *     tags: [Templates]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Template ID
+ *     responses:
+ *       200:
+ *         description: Template retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 template:
+ *                   $ref: '#/components/schemas/MAIETemplate'
+ *       404:
+ *         description: Template not found
+ *       500:
+ *         description: MAIE API error
  */
-router.post('/', requireRole('admin', 'user'), async (req: AuthRequest, res: Response) => {
+router.get("/:id", async (req: AuthRequest, res: Response) => {
   try {
-    const { name, content, ownerType } = req.body as { name?: string; content?: string; ownerType?: string }
-    if (!name || !content || !ownerType) {
-      res.status(400).json({ error: 'name, content and ownerType are required' })
-      return
-    }
+    const { data } = await maieApi.getTemplate(req.params.id);
+    res.json({ template: data });
+  } catch (err) {
+    const { status, error } = handleMaieError(err, "Failed to fetch template");
+    res.status(status).json({ error });
+  }
+});
 
-    if (ownerType !== 'system' && ownerType !== 'user') {
-      res.status(400).json({ error: 'ownerType must be system or user' })
-      return
-    }
+/**
+ * @swagger
+ * /api/templates/{id}/schema:
+ *   get:
+ *     summary: Get template JSON schema
+ *     description: Retrieve the JSON schema for a specific template
+ *     tags: [Templates]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Template ID
+ *     responses:
+ *       200:
+ *         description: Schema retrieved successfully
+ *       404:
+ *         description: Template not found
+ *       500:
+ *         description: MAIE API error
+ */
+router.get("/:id/schema", async (req: AuthRequest, res: Response) => {
+  try {
+    const { data } = await maieApi.getTemplateSchema(req.params.id);
+    res.json({ schema: data });
+  } catch (err) {
+    const { status, error } = handleMaieError(
+      err,
+      "Failed to fetch template schema"
+    );
+    res.status(status).json({ error });
+  }
+});
 
-  if (ownerType === 'system' && req.user!.roleName !== 'admin') {
-      res.status(403).json({ error: 'Only admins can create system templates' })
-      return
-    }
-
-    // Validate content is valid JSON
+/**
+ * @swagger
+ * /api/templates:
+ *   post:
+ *     summary: Create a new template
+ *     description: Create a new template in the MAIE API (admin only)
+ *     tags: [Templates]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - description
+ *               - schema
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 description: Template name
+ *               description:
+ *                 type: string
+ *                 description: Template description
+ *               schema:
+ *                 type: object
+ *                 description: JSON Schema for the template
+ *               prompt_template:
+ *                 type: string
+ *                 description: Optional prompt template
+ *               example:
+ *                 type: object
+ *                 description: Optional example data
+ *     responses:
+ *       201:
+ *         description: Template created successfully
+ *       400:
+ *         description: Invalid input
+ *       403:
+ *         description: Admin access required
+ *       500:
+ *         description: MAIE API error
+ */
+router.post(
+  "/",
+  requireRole("admin"),
+  async (req: AuthRequest, res: Response) => {
     try {
-      JSON.parse(content)
-    } catch (err) {
-      res.status(400).json({ error: 'content must be valid JSON' })
-      return
-    }
-
-    const newT = await prisma.template.create({
-      data: {
-        name,
-        content,
-        ownerType,
-        ownerId: ownerType === 'user' ? req.user!.userId : null,
-      },
-    })
-
-    res.status(201).json({ template: newT })
-  } catch (err) {
-    logger.error('Failed to create template', { err })
-    res.status(500).json({ error: 'Failed to create template' })
-  }
-})
-
-/**
- * PUT /api/templates/:id - update template
- * - system templates: admin only
- * - user templates: owner or admin
- */
-router.put('/:id', requireRole('admin', 'user'), async (req: AuthRequest, res: Response) => {
-  try {
-    const { id } = req.params
-    const { name, content } = req.body as { name?: string; content?: string }
-
-    const t = await prisma.template.findUnique({ where: { id } })
-    if (!t) {
-      res.status(404).json({ error: 'Template not found' })
-      return
-    }
-
-    // Authorization
-  if (t.ownerType === 'system' && req.user!.roleName !== 'admin') {
-      res.status(403).json({ error: 'Only admins can modify system templates' })
-      return
-    }
-    if (t.ownerType === 'user' && t.ownerId !== req.user!.userId && req.user!.roleName !== 'admin') {
-      res.status(403).json({ error: 'Not authorized to modify this template' })
-      return
-    }
-
-    // Validate content if provided
-    if (content !== undefined) {
-      try {
-        JSON.parse(content)
-      } catch (err) {
-        res.status(400).json({ error: 'content must be valid JSON' })
-        return
+      const body = req.body as CreateTemplateDTO;
+      if (!body.name || !body.description || !body.schema) {
+        res
+          .status(400)
+          .json({ error: "name, description, and schema are required" });
+        return;
       }
-    }
 
-    const updated = await prisma.template.update({ where: { id }, data: { name, content } })
-    res.json({ template: updated })
-  } catch (err) {
-    logger.error('Failed to update template', { err })
-    res.status(500).json({ error: 'Failed to update template' })
+      const { data } = await maieApi.createTemplate(body);
+
+      await prisma.auditLog.create({
+        data: {
+          userId: req.user!.userId,
+          action: "template.create",
+          resource: "template",
+          resourceId: data.id,
+          details: { name: body.name },
+          ipAddress: req.ip || "unknown",
+          userAgent: req.headers["user-agent"] || "unknown",
+        },
+      });
+
+      res.status(201).json({ template: data });
+    } catch (err) {
+      const { status, error } = handleMaieError(
+        err,
+        "Failed to create template"
+      );
+      res.status(status).json({ error });
+    }
   }
-})
+);
 
 /**
- * DELETE /api/templates/:id - delete template
- * - system templates: admin only
- * - user templates: owner or admin
+ * PUT /api/templates/:id - update template (admin only)
  */
-router.delete('/:id', requireRole('admin', 'user'), async (req: AuthRequest, res: Response) => {
-  try {
-    const { id } = req.params
-    const t = await prisma.template.findUnique({ where: { id } })
-    if (!t) {
-      res.status(404).json({ error: 'Template not found' })
-      return
-    }
+router.put(
+  "/:id",
+  requireRole("admin"),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const body = req.body as UpdateTemplateDTO;
+      const { data } = await maieApi.updateTemplate(req.params.id, body);
 
-  if (t.ownerType === 'system' && req.user!.roleName !== 'admin') {
-      res.status(403).json({ error: 'Only admins can delete system templates' })
-      return
-    }
-  if (t.ownerType === 'user' && t.ownerId !== req.user!.userId && req.user!.roleName !== 'admin') {
-      res.status(403).json({ error: 'Not authorized to delete this template' })
-      return
-    }
+      await prisma.auditLog.create({
+        data: {
+          userId: req.user!.userId,
+          action: "template.update",
+          resource: "template",
+          resourceId: req.params.id,
+          details: { updatedFields: Object.keys(body) },
+          ipAddress: req.ip || "unknown",
+          userAgent: req.headers["user-agent"] || "unknown",
+        },
+      });
 
-    await prisma.template.delete({ where: { id } })
-    res.json({ message: 'Template deleted' })
-  } catch (err) {
-    logger.error('Failed to delete template', { err })
-    res.status(500).json({ error: 'Failed to delete template' })
+      res.json({ template: data });
+    } catch (err) {
+      const { status, error } = handleMaieError(
+        err,
+        "Failed to update template"
+      );
+      res.status(status).json({ error });
+    }
   }
-})
+);
 
 /**
- * PUT /api/templates/:id/default - set the current user's default template
+ * DELETE /api/templates/:id - delete template (admin only)
  */
-router.put('/:id/default', requireRole('admin', 'user'), async (req: AuthRequest, res: Response) => {
-  try {
-    const { id } = req.params
-    const t = await prisma.template.findUnique({ where: { id } })
-    if (!t) {
-      res.status(404).json({ error: 'Template not found' })
-      return
+router.delete(
+  "/:id",
+  requireRole("admin"),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      await maieApi.deleteTemplate(req.params.id);
+
+      await prisma.auditLog.create({
+        data: {
+          userId: req.user!.userId,
+          action: "template.delete",
+          resource: "template",
+          resourceId: req.params.id,
+          ipAddress: req.ip || "unknown",
+          userAgent: req.headers["user-agent"] || "unknown",
+        },
+      });
+
+      res.json({ message: "Template deleted" });
+    } catch (err) {
+      const { status, error } = handleMaieError(
+        err,
+        "Failed to delete template"
+      );
+      res.status(status).json({ error });
     }
-
-    // Authorization: system templates can be used by any user; user templates only by owner or admin
-    if (t.ownerType === 'user' && t.ownerId !== req.user!.userId && req.user!.roleName !== 'admin') {
-      res.status(403).json({ error: 'Not authorized to use this template' })
-      return
-    }
-
-    // Upsert user's settings row and set defaultTemplateId
-    await prisma.userSettings.upsert({
-      where: { userId: req.user!.userId },
-      create: { userId: req.user!.userId, defaultTemplateId: id },
-      update: { defaultTemplateId: id },
-    })
-
-    res.json({ message: 'Default template set' })
-  } catch (err) {
-    logger.error('Failed to set default template', { err })
-    res.status(500).json({ error: 'Failed to set default template' })
   }
-})
+);
 
-export default router
+export default router;

@@ -1,0 +1,14 @@
+{
+  "title": "Dashboard",
+  "totalDevices": "Total Devices",
+  "onlineDevices": "Online Devices",
+  "totalFiles": "Total Files",
+  "storageUsed": "Storage Used",
+  "filesUploadedToday": "Files Uploaded Today",
+  "deviceEvents24h": "Device Events (24h)",
+  "totalUsers": "Total Users",
+  "recentActivity": "Recent Activity",
+  "noRecentActivity": "No recent activity",
+  "loadingDashboard": "Loading dashboard...",
+  "failedToLoadStats": "Failed to load dashboard statistics"
+}

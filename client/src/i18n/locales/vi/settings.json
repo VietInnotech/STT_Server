@@ -1,0 +1,90 @@
+{
+  "title": "Cài đặt",
+  "subtitle": "Quản lý tùy chọn và cấu hình hệ thống",
+  "reload": "Tải lại",
+  "saveChanges": "Lưu thay đổi",
+  "saving": "Đang lưu...",
+  "settingsSaved": "Lưu cài đặt thành công",
+  "failedToSave": "Không thể lưu cài đặt",
+  "failedToLoad": "Không thể tải cài đặt",
+  "tabs": {
+    "profile": "Hồ sơ",
+    "files": "Tệp tin",
+    "security": "Bảo mật",
+    "ui": "Giao diện",
+    "notifications": "Thông báo"
+  },
+  "profile": {
+    "title": "Hồ sơ người dùng",
+    "username": "Tên đăng nhập",
+    "email": "Email",
+    "fullName": "Họ và tên",
+    "contactAdmin": "Liên hệ quản trị viên để cập nhật thông tin hồ sơ"
+  },
+  "files": {
+    "title": "Quản lý tệp tin",
+    "yourDefaultSetting": "Cài đặt tự động xóa mặc định của bạn",
+    "defaultAutoDelete": "Thời gian tự động xóa mặc định cho tệp tải lên (ngày)",
+    "neverDelete": "Không bao giờ xóa (để trống)",
+    "willBeDeleted": "Tệp của bạn sẽ tự động bị xóa sau {{days}} ngày theo mặc định",
+    "leaveEmpty": "Để trống để không bao giờ tự động xóa tệp (có thể ghi đè khi tải lên)",
+    "personalNote": "Đây là mặc định cá nhân của bạn. Khi tải tệp lên, chúng sẽ sử dụng cài đặt này trừ khi bạn chỉ định giá trị khác.",
+    "preferencesSaved": "Lưu tùy chọn thành công",
+    "failedToSavePreferences": "Không thể lưu tùy chọn",
+    "systemWideSettings": "Cài đặt toàn hệ thống",
+    "systemDefaultAutoDelete": "Thời gian tự động xóa mặc định hệ thống (ngày)",
+    "adminOnly": "Mặc định toàn hệ thống (chỉ quản trị viên)",
+    "maxFileSize": "Kích thước tệp tối đa (MB)",
+    "maxFileSizeDesc": "Kích thước tối đa cho tệp tải lên",
+    "allowedTextFormats": "Định dạng văn bản được phép"
+  },
+  "security": {
+    "title": "Cài đặt bảo mật",
+    "sessionTimeout": "Thời gian hết phiên (ngày)",
+    "sessionTimeoutDesc": "Thời gian duy trì đăng nhập trước khi yêu cầu xác thực lại",
+    "minPasswordLength": "Độ dài mật khẩu tối thiểu",
+    "requireStrongPassword": "Yêu cầu mật khẩu mạnh (chữ hoa, chữ thường, số, ký tự đặc biệt)",
+    "enableAuditLog": "Bật ghi nhật ký kiểm tra (chỉ quản trị viên)",
+    "auditLogNote": "Nhật ký kiểm tra là vĩnh viễn và không thể tự động xóa. Chỉ tệp tải lên mới có thể đặt tự động xóa sau N ngày trong cài đặt Tệp tin.",
+    "twoFactor": {
+      "title": "Xác thực hai yếu tố (2FA)",
+      "enable": "Bật xác thực hai yếu tố (2FA)",
+      "description": "Thêm lớp bảo mật bằng cách yêu cầu mã từ ứng dụng xác thực. Bạn sẽ được yêu cầu xác thực một lần cho mỗi thiết bị mới.",
+      "active": "Đang hoạt động",
+      "enabled": "Đã bật 2FA thành công!",
+      "disabled": "Đã tắt 2FA thành công",
+      "failedToDisable": "Không thể tắt 2FA",
+      "disableTitle": "Tắt xác thực hai yếu tố",
+      "disableWarning": "Tắt 2FA sẽ làm tài khoản kém an toàn hơn. Bạn có chắc muốn tiếp tục?",
+      "confirmPassword": "Xác nhận mật khẩu",
+      "enterPassword": "Nhập mật khẩu",
+      "disabling": "Đang tắt...",
+      "disable2FA": "Tắt 2FA"
+    },
+    "changePassword": {
+      "title": "Đổi mật khẩu",
+      "description": "Để đổi mật khẩu, vui lòng liên hệ quản trị viên hoặc sử dụng tính năng đổi mật khẩu trong menu hồ sơ."
+    }
+  },
+  "ui": {
+    "title": "Tùy chọn giao diện",
+    "theme": "Giao diện",
+    "themeLight": "Sáng",
+    "themeDark": "Tối",
+    "themeAuto": "Tự động (theo hệ thống)",
+    "language": "Ngôn ngữ",
+    "languageHint": "Thay đổi ngôn ngữ hiển thị của ứng dụng",
+    "dateFormat": "Định dạng ngày",
+    "timeFormat": "Định dạng giờ",
+    "time12h": "12 giờ (2:30 CH)",
+    "time24h": "24 giờ (14:30)",
+    "itemsPerPage": "Số mục mỗi trang"
+  },
+  "notifications": {
+    "title": "Tùy chọn thông báo",
+    "enableEmail": "Bật thông báo email",
+    "enablePush": "Bật thông báo đẩy",
+    "notifyOnUpload": "Thông báo khi tải tệp lên",
+    "notifyOnDeviceChange": "Thông báo khi thiết bị thay đổi trạng thái"
+  }
+}

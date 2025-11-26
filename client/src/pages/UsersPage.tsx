@@ -1,45 +1,57 @@
-import { useState, useEffect } from 'react'
-import { UserPlus, Shield, Mail, Calendar, Edit2, Trash2, X } from 'lucide-react'
-import { usersApi } from '../lib/api'
-import Modal from '../components/Modal'
-import toast from 'react-hot-toast'
+import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import {
+  UserPlus,
+  Shield,
+  Mail,
+  Calendar,
+  Edit2,
+  Trash2,
+  X,
+} from "lucide-react";
+import { usersApi } from "../lib/api";
+import { formatDate } from "../lib/formatters";
+import Modal from "../components/Modal";
+import toast from "react-hot-toast";
 
 interface User {
-  id: string
-  username: string
-  email: string
-  fullName?: string | null
-  role: string
-  roleId?: string
-  isActive: boolean
-  lastLogin?: string | null
-  createdAt: string
-  updatedAt?: string
+  id: string;
+  username: string;
+  email: string;
+  fullName?: string | null;
+  role: string;
+  roleId?: string;
+  isActive: boolean;
+  lastLogin?: string | null;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 interface Role {
-  id: string
-  name: string
-  description: string | null
+  id: string;
+  name: string;
+  description: string | null;
 }
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<User[]>([])
-  const [roles, setRoles] = useState<Role[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showModal, setShowModal] = useState(false)
-  const [editingUser, setEditingUser] = useState<User | null>(null)
-  const [showTemplateModal, setShowTemplateModal] = useState(false)
-  const [templateFile, setTemplateFile] = useState<File | null>(null)
-  const [templateText, setTemplateText] = useState('')
+  const { t } = useTranslation("users");
+  const { t: tCommon } = useTranslation("common");
+  const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
   const [formData, setFormData] = useState({
-    username: '',
-    email: '',
-    password: '',
-    fullName: '',
-    roleId: '',
-  })
-  const [confirmModal, setConfirmModal] = useState<{ action: 'delete' | 'toggle' | null; user: User | null }>({ action: null, user: null })
+    username: "",
+    email: "",
+    password: "",
+    fullName: "",
+    roleId: "",
+  });
+  const [confirmModal, setConfirmModal] = useState<{
+    action: "delete" | "toggle" | null;
+    user: User | null;
+  }>({ action: null, user: null });
 
   // Fetch users and roles
   const fetchData = async () => {
@@ -47,68 +59,58 @@ export default function UsersPage() {
       const [usersRes, rolesRes] = await Promise.all([
         usersApi.list(),
         usersApi.getRoles(),
-      ])
-      setUsers(usersRes.data.users)
-      setRoles(rolesRes.data.roles)
+      ]);
+      setUsers(usersRes.data.users);
+      setRoles(rolesRes.data.roles);
     } catch (error) {
-      console.error('Failed to fetch data:', error)
-      toast.error('Failed to load users')
+      console.error("Failed to fetch data:", error);
+      toast.error(t("failedToLoad"));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    fetchData()
-  }, [])
-
-  // format a time portion as HH:mm:ss (24-hour) from an ISO string
-  const formatTimeHHMMSS = (iso?: string | null) => {
-    if (!iso) return ''
-    const d = new Date(iso)
-    const hh = String(d.getHours()).padStart(2, '0')
-    const mm = String(d.getMinutes()).padStart(2, '0')
-    const ss = String(d.getSeconds()).padStart(2, '0')
-    return `${hh}:${mm}:${ss}`
-  }
+    fetchData();
+  }, []);
 
   const handleOpenModal = (user?: User) => {
     if (user) {
-      setEditingUser(user)
+      setEditingUser(user);
       setFormData({
         username: user.username,
         email: user.email,
-        password: '',
-        fullName: user.fullName || '',
-        roleId: user.roleId || '',
-      })
+        password: "",
+        fullName: user.fullName || "",
+        roleId: user.roleId || "",
+      });
     } else {
-      setEditingUser(null)
+      setEditingUser(null);
       setFormData({
-        username: '',
-        email: '',
-        password: '',
-        fullName: '',
-        roleId: roles.length > 0 ? roles[0].id : '',
-      })
+        username: "",
+        email: "",
+        password: "",
+        fullName: "",
+        roleId: roles.length > 0 ? roles[0].id : "",
+      });
     }
-    setShowModal(true)
-  }
+    setShowModal(true);
+  };
 
   const handleCloseModal = () => {
-    setShowModal(false)
-    setEditingUser(null)
+    setShowModal(false);
+    setEditingUser(null);
     setFormData({
-      username: '',
-      email: '',
-      password: '',
-      fullName: '',
-      roleId: '',
-    })
-  }
+      username: "",
+      email: "",
+      password: "",
+      fullName: "",
+      roleId: "",
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
     try {
       if (editingUser) {
         // Update existing user
@@ -117,8 +119,8 @@ export default function UsersPage() {
           fullName: formData.fullName || undefined,
           roleId: formData.roleId,
           ...(formData.password && { password: formData.password }),
-        })
-        toast.success('User updated successfully')
+        });
+        toast.success(t("userUpdated"));
       } else {
         // Create new user
         await usersApi.create({
@@ -127,124 +129,64 @@ export default function UsersPage() {
           password: formData.password,
           fullName: formData.fullName || undefined,
           roleId: formData.roleId,
-        })
-        toast.success('User created successfully')
+        });
+        toast.success(t("userCreated"));
       }
-      handleCloseModal()
-      fetchData()
+      handleCloseModal();
+      fetchData();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to save user')
+      toast.error(error.response?.data?.error || t("failedToSave"));
     }
-  }
+  };
 
   const handleDelete = async (userId: string) => {
     try {
-      await usersApi.delete(userId)
-      toast.success('User deleted successfully')
-      fetchData()
+      await usersApi.delete(userId);
+      toast.success(t("userDeleted"));
+      fetchData();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to delete user')
+      toast.error(error.response?.data?.error || t("failedToDelete"));
     }
-  }
+  };
 
   const handleToggleActive = async (user: User) => {
     try {
       // Prevent toggling admin accounts from UI
-      if (user.role === 'admin') {
-        toast.error('Admin accounts cannot be disabled from the UI')
-        return
+      if (user.role === "admin") {
+        toast.error(t("adminCannotDisable"));
+        return;
       }
-      await usersApi.update(user.id, { isActive: !user.isActive })
-      toast.success(`User ${user.isActive ? 'disabled' : 'enabled'} successfully`)
-      fetchData()
+      await usersApi.update(user.id, { isActive: !user.isActive });
+      toast.success(user.isActive ? t("userDisabled") : t("userEnabled"));
+      fetchData();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to update user status')
+      toast.error(error.response?.data?.error || t("failedToUpdateStatus"));
     }
-  }
+  };
 
-  const openDeleteConfirm = (user: User) => setConfirmModal({ action: 'delete', user })
+  const openDeleteConfirm = (user: User) =>
+    setConfirmModal({ action: "delete", user });
   const openToggleConfirm = (user: User) => {
-    if (user.role === 'admin') {
-      toast.error('Admin accounts cannot be disabled from the UI')
-      return
+    if (user.role === "admin") {
+      toast.error(t("adminCannotDisable"));
+      return;
     }
-    setConfirmModal({ action: 'toggle', user })
-  }
-
-  const openTemplateModal = (user: User) => {
-    setEditingUser(user)
-    setTemplateFile(null)
-    setTemplateText('')
-    setShowTemplateModal(true)
-  }
-
-  const closeTemplateModal = () => {
-    setShowTemplateModal(false)
-    setEditingUser(null)
-    setTemplateFile(null)
-    setTemplateText('')
-  }
-
-  const handleTemplateFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files && e.target.files[0]
-    if (f) {
-      setTemplateFile(f)
-      // Try to read file into text preview
-      const reader = new FileReader()
-      reader.onload = () => {
-        if (typeof reader.result === 'string') setTemplateText(reader.result)
-      }
-      reader.readAsText(f)
-    } else {
-      setTemplateFile(null)
-      setTemplateText('')
-    }
-  }
-
-  const handleUploadTemplate = async (e?: React.FormEvent) => {
-    e?.preventDefault()
-    if (!editingUser) return
-    // Validate JSON either from file content (templateText) or textarea
-    try {
-      if (!templateText) {
-        toast.error('Please provide a JSON template as a file or paste the JSON text')
-        return
-      }
-      JSON.parse(templateText)
-    } catch (err: any) {
-      toast.error('Invalid JSON: ' + (err?.message || 'Parse error'))
-      return
-    }
-
-    try {
-      // Call API; prefer sending file if available for original filename
-      if (templateFile) {
-        await usersApi.uploadTemplate(editingUser.id, templateFile, undefined as any)
-      } else {
-        await usersApi.uploadTemplate(editingUser.id, undefined as any, templateText)
-      }
-      toast.success('Template uploaded successfully')
-      closeTemplateModal()
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to upload template')
-    }
-  }
+    setConfirmModal({ action: "toggle", user });
+  };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Users</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage user accounts and permissions
-          </p>
+          <h2 className="text-2xl font-bold text-gray-900">{t("title")}</h2>
+          <p className="text-sm text-gray-500 mt-1">{t("subtitle")}</p>
         </div>
         <button
           onClick={() => handleOpenModal()}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
           <UserPlus className="h-4 w-4" />
-          Add User
+          {t("addUser")}
         </button>
       </div>
 
@@ -260,18 +202,23 @@ export default function UsersPage() {
                   {user.username.charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <h3 className="font-semibold text-gray-900">{user.username}</h3>
+                  <h3 className="font-semibold text-gray-900">
+                    {user.username}
+                  </h3>
                   <div className="flex items-center gap-1 mt-1">
                     <Shield className="h-3 w-3 text-gray-400" />
                     <span className="text-xs text-gray-500">{user.role}</span>
                   </div>
                 </div>
               </div>
-              <span className={`px-2 py-1 text-xs font-medium rounded ${user.isActive
-                ? 'bg-green-100 text-green-700'
-                : 'bg-gray-100 text-gray-700'
-                }`}>
-                {user.isActive ? 'Active' : 'Inactive'}
+              <span
+                className={`px-2 py-1 text-xs font-medium rounded ${
+                  user.isActive
+                    ? "bg-green-100 text-green-700"
+                    : "bg-gray-100 text-gray-700"
+                }`}
+              >
+                {user.isActive ? t("active") : t("inactive")}
               </span>
             </div>
 
@@ -289,16 +236,14 @@ export default function UsersPage() {
               <div className="flex items-center gap-2 text-sm">
                 <Calendar className="h-4 w-4 text-gray-400" />
                 <span className="text-gray-600">
-                  Joined {new Date(user.createdAt).toLocaleDateString()}{' '}
-                  <span className="text-xs text-gray-500">{formatTimeHHMMSS(user.createdAt)}</span>
+                  {t("joined")} {formatDate(user.createdAt)}
                 </span>
               </div>
               {user.lastLogin && (
                 <div className="flex items-center gap-2 text-sm">
                   <Calendar className="h-4 w-4 text-gray-400" />
                   <span className="text-gray-600">
-                    Last login: {new Date(user.lastLogin).toLocaleDateString()} {' '}
-                    <span className="text-xs text-gray-500">{formatTimeHHMMSS(user.lastLogin)}</span>
+                    {t("lastLogin")}: {formatDate(user.lastLogin)}
                   </span>
                 </div>
               )}
@@ -310,32 +255,33 @@ export default function UsersPage() {
                 className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
               >
                 <Edit2 className="h-4 w-4" />
-                Edit
-              </button>
-              <button
-                onClick={() => openTemplateModal(user)}
-                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-600 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
-              >
-                Template
+                {tCommon("edit")}
               </button>
               <button
                 onClick={() => openDeleteConfirm(user)}
                 className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
               >
                 <Trash2 className="h-4 w-4" />
-                Delete
+                {tCommon("delete")}
               </button>
               {/* Disable / Enable button for non-admin users */}
-              {user.role !== 'admin' && (
+              {user.role !== "admin" && (
                 <button
                   onClick={() => openToggleConfirm(user)}
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${user.isActive ? 'text-yellow-700 bg-yellow-50 hover:bg-yellow-100' : 'text-green-600 bg-green-50 hover:bg-green-100'
-                    }`}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                    user.isActive
+                      ? "text-yellow-700 bg-yellow-50 hover:bg-yellow-100"
+                      : "text-green-600 bg-green-50 hover:bg-green-100"
+                  }`}
                 >
                   {user.isActive ? (
-                    <span className="flex items-center gap-2"><X className="h-4 w-4" /> Disable</span>
+                    <span className="flex items-center gap-2">
+                      <X className="h-4 w-4" /> {t("disable")}
+                    </span>
                   ) : (
-                    <span className="flex items-center gap-2"><Shield className="h-4 w-4" /> Enable</span>
+                    <span className="flex items-center gap-2">
+                      <Shield className="h-4 w-4" /> {t("enable")}
+                    </span>
                   )}
                 </button>
               )}
@@ -346,110 +292,113 @@ export default function UsersPage() {
 
       {loading && (
         <div className="flex items-center justify-center h-64">
-          <div className="text-gray-500">Loading users...</div>
+          <div className="text-gray-500">{t("loadingUsers")}</div>
         </div>
-      )}
-
-      {/* Template Upload Modal (use shared Modal component for consistent backdrop/styling) */}
-      {showTemplateModal && editingUser && (
-        <Modal
-          title={`Upload Template for ${editingUser.username}`}
-          open={showTemplateModal}
-          onClose={closeTemplateModal}
-          maxWidth="lg"
-        >
-          <form onSubmit={handleUploadTemplate} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">JSON File (.json)</label>
-              <input type="file" accept="application/json,.json" onChange={handleTemplateFileChange} className="w-full" />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Or paste JSON text</label>
-              <textarea value={templateText} onChange={(e) => setTemplateText(e.target.value)} rows={8} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
-            </div>
-
-            <div className="flex gap-3 mt-4">
-              <button type="button" onClick={closeTemplateModal} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
-              <button type="submit" className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">Upload</button>
-            </div>
-          </form>
-        </Modal>
       )}
 
       {!loading && users.length === 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
           <UserPlus className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No users found</h3>
-          <p className="text-gray-500">Create your first user to get started</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">
+            {t("noUsers")}
+          </h3>
+          <p className="text-gray-500">{t("createFirstUser")}</p>
         </div>
       )}
 
       {/* Add/Edit User Modal (use shared Modal component for consistent backdrop/styling) */}
       {showModal && (
         <Modal
-          title={editingUser ? 'Edit User' : 'Add New User'}
+          title={editingUser ? t("editUser") : t("addNewUser")}
           open={showModal}
           onClose={handleCloseModal}
           maxWidth="md"
+          footer={
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleCloseModal}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                {tCommon("cancel")}
+              </button>
+              <button
+                type="submit"
+                form="user-form"
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                {editingUser ? tCommon("update") : tCommon("create")}
+              </button>
+            </div>
+          }
         >
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form id="user-form" onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Username
+                {t("username")}
               </label>
               <input
                 type="text"
                 required
                 disabled={!!editingUser}
                 value={formData.username}
-                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, username: e.target.value })
+                }
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
-                placeholder="johndoe"
+                placeholder={t("usernamePlaceholder")}
               />
               {editingUser && (
-                <p className="mt-1 text-xs text-gray-500">Username cannot be changed</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {t("usernameCannotChange")}
+                </p>
               )}
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
+                {t("email")}
               </label>
               <input
                 type="email"
                 required
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, email: e.target.value })
+                }
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="john@example.com"
+                placeholder={t("emailPlaceholder")}
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Full Name
+                {t("fullName")}
               </label>
               <input
                 type="text"
                 value={formData.fullName}
-                onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, fullName: e.target.value })
+                }
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="John Doe"
+                placeholder={t("fullNamePlaceholder")}
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Role
+                {t("role")}
               </label>
               <select
                 required
                 value={formData.roleId}
-                onChange={(e) => setFormData({ ...formData, roleId: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, roleId: e.target.value })
+                }
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="">Select a role</option>
+                <option value="">{t("selectRole")}</option>
                 {roles.map((role) => (
                   <option key={role.id} value={role.id}>
                     {role.name}
@@ -460,32 +409,20 @@ export default function UsersPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Password {editingUser && '(leave blank to keep current)'}
+                {t("password")} {editingUser && t("passwordKeepCurrent")}
               </label>
               <input
                 type="password"
                 required={!editingUser}
                 value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, password: e.target.value })
+                }
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder={editingUser ? '••••••••' : 'Enter password'}
+                placeholder={
+                  editingUser ? "••••••••" : t("passwordPlaceholder")
+                }
               />
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                type="button"
-                onClick={handleCloseModal}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                {editingUser ? 'Update' : 'Create'}
-              </button>
             </div>
           </form>
         </Modal>
@@ -494,34 +431,65 @@ export default function UsersPage() {
       {/* Confirm action modal for Delete / Enable/Disable */}
       {confirmModal.action && confirmModal.user && (
         <Modal
-          title={confirmModal.action === 'delete' ? `Delete ${confirmModal.user.username}?` : `${confirmModal.user.isActive ? 'Disable' : 'Enable'} ${confirmModal.user.username}?`}
+          title={
+            confirmModal.action === "delete"
+              ? t("confirmDelete", { username: confirmModal.user.username })
+              : t("confirmToggle", {
+                  action: confirmModal.user.isActive
+                    ? t("disable")
+                    : t("enable"),
+                  username: confirmModal.user.username,
+                })
+          }
           open={true}
           onClose={() => setConfirmModal({ action: null, user: null })}
           maxWidth="sm"
         >
           <div className="space-y-4">
-            <p className="text-sm text-gray-700">Are you sure you want to {confirmModal.action === 'delete' ? 'permanently delete' : (confirmModal.user.isActive ? 'disable' : 'enable')} this user?</p>
+            <p className="text-sm text-gray-700">
+              {confirmModal.action === "delete"
+                ? t("confirmDeleteDesc")
+                : t("confirmToggleDesc", {
+                    action: confirmModal.user.isActive
+                      ? t("disable").toLowerCase()
+                      : t("enable").toLowerCase(),
+                  })}
+            </p>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirmModal({ action: null, user: null })} className="px-3 py-2 rounded bg-gray-100">Cancel</button>
+              <button
+                onClick={() => setConfirmModal({ action: null, user: null })}
+                className="px-3 py-2 rounded bg-gray-100"
+              >
+                {tCommon("cancel")}
+              </button>
               <button
                 onClick={async () => {
-                  const u = confirmModal.user
-                  const act = confirmModal.action
-                  setConfirmModal({ action: null, user: null })
-                  if (!u || !act) return
-                  if (act === 'delete') {
-                    await handleDelete(u.id)
-                  } else if (act === 'toggle') {
-                    await handleToggleActive(u)
+                  const u = confirmModal.user;
+                  const act = confirmModal.action;
+                  setConfirmModal({ action: null, user: null });
+                  if (!u || !act) return;
+                  if (act === "delete") {
+                    await handleDelete(u.id);
+                  } else if (act === "toggle") {
+                    await handleToggleActive(u);
                   }
                 }}
-                className={`px-3 py-2 rounded ${confirmModal.action === 'delete' ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'}`}>
-                {confirmModal.action === 'delete' ? 'Delete' : (confirmModal.user.isActive ? 'Disable' : 'Enable')}
+                className={`px-3 py-2 rounded ${
+                  confirmModal.action === "delete"
+                    ? "bg-red-600 text-white"
+                    : "bg-blue-600 text-white"
+                }`}
+              >
+                {confirmModal.action === "delete"
+                  ? tCommon("delete")
+                  : confirmModal.user.isActive
+                  ? t("disable")
+                  : t("enable")}
               </button>
             </div>
           </div>
         </Modal>
       )}
     </div>
-  )
+  );
 }

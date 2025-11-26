@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useSocketStore } from '../stores/socket'
 import { Activity, Server, Database, Wifi } from 'lucide-react'
 import { statsApi, type DashboardStats } from '../lib/api'
 import toast from 'react-hot-toast'
 
 export default function DashboardPage() {
+  const { t } = useTranslation('dashboard')
   const socket = useSocketStore((state) => state.socket)
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -16,7 +18,7 @@ export default function DashboardPage() {
       setStats(response.data)
     } catch (error) {
       console.error('Failed to fetch stats:', error)
-      toast.error('Failed to load dashboard statistics')
+      toast.error(t('failedToLoad'))
     } finally {
       setLoading(false)
     }
@@ -46,7 +48,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500">Loading dashboard...</div>
+        <div className="text-gray-500">{t('loading')}</div>
       </div>
     )
   }
@@ -54,32 +56,32 @@ export default function DashboardPage() {
   if (!stats) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500">No data available</div>
+        <div className="text-gray-500">{t('noData')}</div>
       </div>
     )
   }
 
   const cards = [
     {
-      title: 'Total Devices',
+      title: t('totalDevices'),
       value: stats.devices.total,
       icon: Server,
       color: 'bg-blue-500',
     },
     {
-      title: 'Online Devices',
+      title: t('onlineDevices'),
       value: stats.devices.online,
       icon: Wifi,
       color: 'bg-green-500',
     },
     {
-      title: 'Total Files',
+      title: t('totalFiles'),
       value: stats.files.total,
       icon: Database,
       color: 'bg-purple-500',
     },
     {
-      title: 'Storage Used',
+      title: t('storageUsed'),
       value: stats.storage.formatted,
       icon: Activity,
       color: 'bg-orange-500',
@@ -112,24 +114,24 @@ export default function DashboardPage() {
       {/* Additional Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">Files Uploaded Today</h3>
+          <h3 className="text-sm font-medium text-gray-500 mb-2">{t('filesUploadedToday')}</h3>
           <p className="text-2xl font-bold text-gray-900">{stats.files.uploadedToday}</p>
         </div>
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">Device Events (24h)</h3>
+          <h3 className="text-sm font-medium text-gray-500 mb-2">{t('deviceEvents24h')}</h3>
           <p className="text-2xl font-bold text-gray-900">{stats.activity.deviceEvents24h}</p>
         </div>
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">Total Users</h3>
+          <h3 className="text-sm font-medium text-gray-500 mb-2">{t('totalUsers')}</h3>
           <p className="text-2xl font-bold text-gray-900">{stats.users.total}</p>
         </div>
       </div>
 
       {/* Recent Activity */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">{t('recentActivity')}</h2>
         {stats.recentActivities.length === 0 ? (
-          <p className="text-gray-500 text-center py-4">No recent activity</p>
+          <p className="text-gray-500 text-center py-4">{t('noRecentActivity')}</p>
         ) : (
           // Constrain the activity list and make it scrollable so it doesn't push the page
           // Use responsive max heights so desktop shows more items while mobile stays compact

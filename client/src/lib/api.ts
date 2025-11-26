@@ -1,38 +1,38 @@
-import axios from 'axios'
+import axios from "axios";
 
 // API base URL - adjust based on environment
-const API_BASE_URL = import.meta.env.VITE_API_URL || window.location.origin // use browser address bar origin when VITE_API_URL not set
+const API_BASE_URL = import.meta.env.VITE_API_URL || window.location.origin; // use browser address bar origin when VITE_API_URL not set
 
 // Create axios instance with default config
 export const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   },
   withCredentials: true,
-})
+});
 
 // Request interceptor - Add auth token to requests
 api.interceptors.request.use(
   (config) => {
     // Get token from localStorage
-    const authStorage = localStorage.getItem('auth-storage')
+    const authStorage = localStorage.getItem("auth-storage");
     if (authStorage) {
       try {
-        const { state } = JSON.parse(authStorage)
+        const { state } = JSON.parse(authStorage);
         if (state?.token) {
-          config.headers.Authorization = `Bearer ${state.token}`
+          config.headers.Authorization = `Bearer ${state.token}`;
         }
       } catch (error) {
-        console.error('Failed to parse auth storage:', error)
+        console.error("Failed to parse auth storage:", error);
       }
     }
-    return config
+    return config;
   },
   (error) => {
-    return Promise.reject(error)
+    return Promise.reject(error);
   }
-)
+);
 
 // Response interceptor - Handle errors globally
 api.interceptors.response.use(
@@ -42,277 +42,340 @@ api.interceptors.response.use(
       try {
         // If the user was kicked (kickedMessage present in persisted auth storage),
         // don't auto-clear or redirect — let the modal handle logout/redirect when user confirms.
-        const raw = localStorage.getItem('auth-storage')
+        const raw = localStorage.getItem("auth-storage");
         if (raw) {
           try {
-            const parsed = JSON.parse(raw)
-            const kicked = parsed?.state?.kickedMessage
+            const parsed = JSON.parse(raw);
+            const kicked = parsed?.state?.kickedMessage;
             if (kicked) {
               // Ensure UI shows the kicked modal immediately (in case socket wasn't
               // identified). Set kickedMessage in the in-memory auth store.
               try {
-                import('../stores/auth').then(({ useAuthStore }) => {
-                  try { useAuthStore.getState().setKickedMessage(kicked) } catch {}
-                })
+                import("../stores/auth").then(({ useAuthStore }) => {
+                  try {
+                    useAuthStore.getState().setKickedMessage(kicked);
+                  } catch {}
+                });
               } catch {}
               // Do not auto-logout/redirect now; the UI will show a modal and handle final logout.
-              return Promise.reject(error)
+              return Promise.reject(error);
             }
           } catch {}
         }
 
         // No kickedMessage — proceed with normal 401 handling
-        localStorage.removeItem('auth-storage')
-        import('../stores/socket')
+        localStorage.removeItem("auth-storage");
+        import("../stores/socket")
           .then(({ useSocketStore }) => {
-            try { useSocketStore.getState().disconnect() } catch {}
+            try {
+              useSocketStore.getState().disconnect();
+            } catch {}
           })
-          .catch(() => {})
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login'
+          .catch(() => {});
+        if (window.location.pathname !== "/login") {
+          window.location.href = "/login";
         }
       } catch (err) {
         // Failsafe: still remove auth and redirect
-        localStorage.removeItem('auth-storage')
-        if (window.location.pathname !== '/login') window.location.href = '/login'
+        localStorage.removeItem("auth-storage");
+        if (window.location.pathname !== "/login")
+          window.location.href = "/login";
       }
     }
-    return Promise.reject(error)
+    return Promise.reject(error);
   }
-)
+);
 
 // ============================================
 // AUTH API
 // ============================================
 
 export interface LoginRequest {
-  username: string
-  password: string
-  deviceFingerprint?: string
+  username: string;
+  password: string;
+  deviceFingerprint?: string;
 }
 
 export interface LoginResponse {
   user?: {
-    id: string
-    username: string
-    email: string
-    fullName: string | null
-    role: string
-    roleId: string
-  }
-  token?: string
-  requires2FA?: boolean
-  userId?: string
-  message?: string
+    id: string;
+    username: string;
+    email: string;
+    fullName: string | null;
+    role: string;
+    roleId: string;
+  };
+  token?: string;
+  requires2FA?: boolean;
+  userId?: string;
+  message?: string;
 }
 
 export interface User {
-  id: string
-  username: string
-  email: string
-  fullName: string | null
-  role: string
-  roleId: string
-  isActive: boolean
-  lastLogin: string | null
-  createdAt: string
+  id: string;
+  username: string;
+  email: string;
+  fullName: string | null;
+  role: string;
+  roleId: string;
+  isActive: boolean;
+  lastLogin: string | null;
+  createdAt: string;
 }
 
 export const authApi = {
-  login: (data: LoginRequest) => api.post<LoginResponse>('/api/auth/login', data),
-  logout: () => api.post('/api/auth/logout'),
-  me: () => api.get<User>('/api/auth/me'),
+  login: (data: LoginRequest) =>
+    api.post<LoginResponse>("/api/auth/login", data),
+  logout: () => api.post("/api/auth/logout"),
+  me: () => api.get<User>("/api/auth/me"),
   changePassword: (data: { currentPassword: string; newPassword: string }) =>
-    api.post('/api/auth/change-password', data),
-}
+    api.post("/api/auth/change-password", data),
+};
 
 // ============================================
 // DEVICES API
 // ============================================
 
 export interface Device {
-  id: string
-  deviceName: string
-  deviceId: string
-  ipAddress: string | null
-  macAddress: string | null
-  androidVersion: string | null
-  appVersion: string | null
-  isOnline: boolean
-  lastSeen: string
-  registeredAt: string
-  updatedAt: string
+  id: string;
+  deviceName: string;
+  deviceId: string;
+  ipAddress: string | null;
+  macAddress: string | null;
+  androidVersion: string | null;
+  appVersion: string | null;
+  isOnline: boolean;
+  lastSeen: string;
+  registeredAt: string;
+  updatedAt: string;
 }
 
 export const devicesApi = {
   list: (online?: boolean) =>
-    api.get<{ devices: Device[] }>(`/api/devices${online ? '?online=true' : ''}`),
+    api.get<{ devices: Device[] }>(
+      `/api/devices${online ? "?online=true" : ""}`
+    ),
   get: (id: string) => api.get<{ device: Device }>(`/api/devices/${id}`),
   updateName: (id: string, deviceName: string) =>
     api.put(`/api/devices/${id}/name`, { deviceName }),
   delete: (id: string) => api.delete(`/api/devices/${id}`),
-}
+};
 
 // ============================================
 // FILES API
 // ============================================
 
 export interface AudioFile {
-  id: string
-  filename: string
-  fileSize: number
-  mimeType: string
-  deviceId: string
-  uploadedBy: string
-  createdAt: string
-  autoDeleteAfterDays: number | null
+  id: string;
+  filename: string;
+  fileSize: number;
+  mimeType: string;
+  deviceId: string;
+  uploadedBy: string;
+  createdAt: string;
+  autoDeleteAfterDays: number | null;
 }
 
 export interface TextFile {
-  id: string
-  filename: string
-  fileSize: number
-  mimeType: string
-  deviceId: string
-  uploadedBy: string
-  createdAt: string
-  autoDeleteAfterDays: number | null
+  id: string;
+  filename: string;
+  fileSize: number;
+  mimeType: string;
+  deviceId: string;
+  uploadedBy: string;
+  createdAt: string;
+  autoDeleteAfterDays: number | null;
 }
 
 export interface FileItem {
-  id: string
-  filename: string
-  originalName?: string
-  fileSize: number
-  mimeType: string
-  deviceId?: string | null
-  uploadedById?: string | null
+  id: string;
+  filename: string;
+  originalName?: string;
+  fileSize: number;
+  mimeType: string;
+  deviceId?: string | null;
+  uploadedById?: string | null;
   uploadedBy?: {
-    id: string
-    username: string
-    fullName: string | null
-  } | null
-  uploadedAt: string
-  updatedAt?: string
+    id: string;
+    username: string;
+    fullName: string | null;
+  } | null;
+  uploadedAt: string;
+  updatedAt?: string;
 }
 
 export interface TextFilePairItem {
-  id: string
-  name?: string | null
-  summaryFileId: string
-  realtimeFileId: string
-  summaryFile?: FileItem
-  realtimeFile?: FileItem
-  uploadedById?: string | null
-  uploadedAt?: string
-  createdAt?: string
+  id: string;
+  name?: string | null;
+  summaryFileId: string;
+  realtimeFileId: string;
+  summaryFile?: FileItem;
+  realtimeFile?: FileItem;
+  uploadedById?: string | null;
+  uploadedAt?: string;
+  createdAt?: string;
 }
 
 export const filesApi = {
   // Audio files
-  listAudio: (params?: { deviceId?: string; limit?: number; offset?: number }) =>
-    api.get<{ files: FileItem[] }>('/api/files/audio', { params }),
+  listAudio: (params?: {
+    deviceId?: string;
+    limit?: number;
+    offset?: number;
+  }) => api.get<{ files: FileItem[] }>("/api/files/audio", { params }),
   getAudio: (id: string) =>
-    api.get(`/api/files/audio/${id}`, { responseType: 'blob' }),
-  uploadAudio: (file: File, deviceId?: string, deleteAfterDays?: number | null) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    if (deviceId) formData.append('deviceId', deviceId)
-    if (deleteAfterDays !== undefined && deleteAfterDays !== null) formData.append('deleteAfterDays', String(deleteAfterDays))
-    return api.post<FileItem>('/api/files/audio', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
+    api.get(`/api/files/audio/${id}`, { responseType: "blob" }),
+  uploadAudio: (
+    file: File,
+    deviceId?: string,
+    deleteAfterDays?: number | null
+  ) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (deviceId) formData.append("deviceId", deviceId);
+    if (deleteAfterDays !== undefined && deleteAfterDays !== null)
+      formData.append("deleteAfterDays", String(deleteAfterDays));
+    return api.post<FileItem>("/api/files/audio", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
   },
   deleteAudio: (id: string) => api.delete(`/api/files/audio/${id}`),
 
   // Text files
   listText: (params?: { deviceId?: string; limit?: number; offset?: number }) =>
-    api.get<{ files: FileItem[] }>('/api/files/text', { params }),
+    api.get<{ files: FileItem[] }>("/api/files/text", { params }),
   getText: (id: string) =>
-    api.get(`/api/files/text/${id}`, { responseType: 'blob' }),
+    api.get(`/api/files/text/${id}`, { responseType: "blob" }),
   // Upload text either as a file (web) or as an Android structured payload
-  uploadText: (opts: { file?: File; androidPayload?: any; deviceId?: string; deleteAfterDays?: number | null }) => {
-    const { file, androidPayload, deviceId, deleteAfterDays } = opts
-    const formData = new FormData()
-    if (file) formData.append('file', file)
+  uploadText: (opts: {
+    file?: File;
+    androidPayload?: any;
+    deviceId?: string;
+    deleteAfterDays?: number | null;
+  }) => {
+    const { file, androidPayload, deviceId, deleteAfterDays } = opts;
+    const formData = new FormData();
+    if (file) formData.append("file", file);
     if (androidPayload) {
       // send as text field 'json' and mark source=android
-      formData.append('json', typeof androidPayload === 'string' ? androidPayload : JSON.stringify(androidPayload))
-      formData.append('source', 'android')
+      formData.append(
+        "json",
+        typeof androidPayload === "string"
+          ? androidPayload
+          : JSON.stringify(androidPayload)
+      );
+      formData.append("source", "android");
       // when androidPayload is provided but no file, set a synthetic filename
-      if (!file) formData.append('file', new Blob([JSON.stringify(androidPayload)], { type: 'application/json' }), 'android_payload.json')
+      if (!file)
+        formData.append(
+          "file",
+          new Blob([JSON.stringify(androidPayload)], {
+            type: "application/json",
+          }),
+          "android_payload.json"
+        );
     }
-    if (deviceId) formData.append('deviceId', deviceId)
-    if (deleteAfterDays !== undefined && deleteAfterDays !== null) formData.append('deleteAfterDays', String(deleteAfterDays))
-    return api.post<FileItem>('/api/files/text', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
+    if (deviceId) formData.append("deviceId", deviceId);
+    if (deleteAfterDays !== undefined && deleteAfterDays !== null)
+      formData.append("deleteAfterDays", String(deleteAfterDays));
+    return api.post<FileItem>("/api/files/text", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
   },
   deleteText: (id: string) => api.delete(`/api/files/text/${id}`),
   // Share files with users
-  share: (shares: Array<{ fileId: string; fileType: 'audio' | 'text'; userId: string; expiresInDays?: number | null }>) =>
-    api.post('/api/files/share', { shares }),
-  revokeShare: (data: { fileId: string; sharedWithId: string }) => api.delete('/api/files/share', { data }),
+  share: (
+    shares: Array<{
+      fileId: string;
+      fileType: "audio" | "text";
+      userId: string;
+      expiresInDays?: number | null;
+    }>
+  ) => api.post("/api/files/share", { shares }),
+  revokeShare: (data: { fileId: string; sharedWithId: string }) =>
+    api.delete("/api/files/share", { data }),
   // Combined list (audio + text) to reduce client request count
   listAll: (params?: { deviceId?: string; limit?: number; offset?: number }) =>
-    api.get<{ audio: FileItem[]; text: FileItem[] }>('/api/files/all', { params }),
+    api.get<{ audio: FileItem[]; text: FileItem[] }>("/api/files/all", {
+      params,
+    }),
   // Text file pairs (summary + realtime)
-  listPairs: (params?: { limit?: number; offset?: number }) => api.get<{ pairs: TextFilePairItem[] }>('/api/files/pairs', { params }),
-  getPair: (id: string) => api.get<{ pair: TextFilePairItem }>(`/api/files/pairs/${id}`),
+  listPairs: (params?: { limit?: number; offset?: number }) =>
+    api.get<{ pairs: TextFilePairItem[] }>("/api/files/pairs", { params }),
+  getPair: (id: string) =>
+    api.get<{ pair: TextFilePairItem }>(`/api/files/pairs/${id}`),
   deletePair: (id: string) => api.delete(`/api/files/pairs/${id}`),
   // WebUI upload pair (multipart)
-  uploadPair: (opts: { summaryFile?: File; realtimeFile?: File; pairName?: string; deleteAfterDays?: number | null }) => {
-    const formData = new FormData()
-    if (opts.summaryFile) formData.append('summary', opts.summaryFile)
-    if (opts.realtimeFile) formData.append('realtime', opts.realtimeFile)
-    if (opts.pairName) formData.append('pairName', opts.pairName)
-    if (opts.deleteAfterDays !== undefined && opts.deleteAfterDays !== null) formData.append('deleteAfterDays', String(opts.deleteAfterDays))
-    return api.post('/api/files/text-pair', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+  uploadPair: (opts: {
+    summaryFile?: File;
+    realtimeFile?: File;
+    pairName?: string;
+    deleteAfterDays?: number | null;
+  }) => {
+    const formData = new FormData();
+    if (opts.summaryFile) formData.append("summary", opts.summaryFile);
+    if (opts.realtimeFile) formData.append("realtime", opts.realtimeFile);
+    if (opts.pairName) formData.append("pairName", opts.pairName);
+    if (opts.deleteAfterDays !== undefined && opts.deleteAfterDays !== null)
+      formData.append("deleteAfterDays", String(opts.deleteAfterDays));
+    return api.post("/api/files/text-pair", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
   },
   // Android endpoint - JSON POST
-  uploadPairAndroid: (payload: { summary: string; realtime: string; deviceId?: string; deleteAfterDays?: number | null; pairName?: string }) =>
-    api.post('/api/files/text-pair-android', payload),
-}
+  uploadPairAndroid: (payload: {
+    summary: string;
+    realtime: string;
+    deviceId?: string;
+    deleteAfterDays?: number | null;
+    pairName?: string;
+  }) => api.post("/api/files/text-pair-android", payload),
+};
 
 // ============================================
 // USERS API
 // ============================================
 
 export interface UserListItem {
-  id: string
-  username: string
-  email: string
-  fullName: string | null
-  role: string
-  isActive: boolean
-  lastLogin: string | null
-  createdAt: string
+  id: string;
+  username: string;
+  email: string;
+  fullName: string | null;
+  role: string;
+  isActive: boolean;
+  lastLogin: string | null;
+  createdAt: string;
 }
 
 export const usersApi = {
-  list: () => api.get<{ users: UserListItem[]; count: number }>('/api/users'),
+  list: () => api.get<{ users: UserListItem[]; count: number }>("/api/users"),
   get: (id: string) => api.get<User>(`/api/users/${id}`),
   create: (data: {
-    username: string
-    email: string
-    password: string
-    fullName?: string
-    roleId: string
-  }) => api.post<UserListItem>('/api/users', data),
-  update: (id: string, data: Partial<UserListItem> & { password?: string; roleId?: string }) =>
-    api.put<UserListItem>(`/api/users/${id}`, data),
+    username: string;
+    email: string;
+    password: string;
+    fullName?: string;
+    roleId: string;
+  }) => api.post<UserListItem>("/api/users", data),
+  update: (
+    id: string,
+    data: Partial<UserListItem> & { password?: string; roleId?: string }
+  ) => api.put<UserListItem>(`/api/users/${id}`, data),
   delete: (id: string) => api.delete(`/api/users/${id}`),
-  getRoles: () => api.get<{ roles: Array<{ id: string; name: string; description: string | null }> }>('/api/users/roles/list'),
+  getRoles: () =>
+    api.get<{
+      roles: Array<{ id: string; name: string; description: string | null }>;
+    }>("/api/users/roles/list"),
   // Upload JSON template for a user (file or raw JSON text)
   uploadTemplate: (id: string, file?: File, jsonText?: string) => {
-    const formData = new FormData()
-    if (file) formData.append('file', file)
-    if (jsonText) formData.append('json', jsonText)
+    const formData = new FormData();
+    if (file) formData.append("file", file);
+    if (jsonText) formData.append("json", jsonText);
     return api.post(`/api/users/${id}/template`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
+      headers: { "Content-Type": "multipart/form-data" },
+    });
   },
-}
+};
 
 // ============================================
 // STATS API
@@ -320,46 +383,48 @@ export const usersApi = {
 
 export interface DashboardStats {
   devices: {
-    total: number
-    online: number
-    offline: number
-  }
+    total: number;
+    online: number;
+    offline: number;
+  };
   files: {
-    audio: number
-    text: number
-    total: number
-    uploadedToday: number
-  }
+    audio: number;
+    text: number;
+    total: number;
+    uploadedToday: number;
+  };
   storage: {
-    total: number
-    audio: number
-    text: number
-    formatted: string
-  }
+    total: number;
+    audio: number;
+    text: number;
+    formatted: string;
+  };
   users: {
-    total: number
-  }
+    total: number;
+  };
   activity: {
-    deviceEvents24h: number
-    filesUploadedToday: number
-  }
+    deviceEvents24h: number;
+    filesUploadedToday: number;
+  };
   recentActivities: Array<{
-    id: string
-    action: string
-    resource: string
-    user: string
-    userFullName: string | null
-    timestamp: string
-    success: boolean
-    details: any
-  }>
+    id: string;
+    action: string;
+    resource: string;
+    user: string;
+    userFullName: string | null;
+    timestamp: string;
+    success: boolean;
+    details: any;
+  }>;
 }
 
 export const statsApi = {
-  dashboard: () => api.get<DashboardStats>('/api/stats/dashboard'),
+  dashboard: () => api.get<DashboardStats>("/api/stats/dashboard"),
   devicesChart: (days: number = 7) =>
-    api.get<{ data: Array<{ date: string; online: number; offline: number }> }>(`/api/stats/devices-chart?days=${days}`),
-}
+    api.get<{ data: Array<{ date: string; online: number; offline: number }> }>(
+      `/api/stats/devices-chart?days=${days}`
+    ),
+};
 
 // ============================================
 // SETTINGS API
@@ -367,85 +432,117 @@ export const statsApi = {
 
 export interface UserSettings {
   // File Management
-  autoDeleteDays: number
-  maxFileSize: number
-  allowedAudioFormats: string[]
-  allowedTextFormats: string[]
+  autoDeleteDays: number;
+  maxFileSize: number;
+  allowedAudioFormats: string[];
+  allowedTextFormats: string[];
 
   // Audio Processing
-  defaultSampleRate: number
-  defaultBitrate: number
-  defaultChannels: number
-  audioQuality: 'low' | 'medium' | 'high' | 'lossless'
+  defaultSampleRate: number;
+  defaultBitrate: number;
+  defaultChannels: number;
+  audioQuality: "low" | "medium" | "high" | "lossless";
 
   // Security
-  sessionTimeout: number
-  passwordMinLength: number
-  requireStrongPassword: boolean
-  enableTwoFactor: boolean
+  sessionTimeout: number;
+  passwordMinLength: number;
+  requireStrongPassword: boolean;
+  enableTwoFactor: boolean;
 
   // UI Preferences
-  theme: 'light' | 'dark' | 'auto'
-  language: string
-  dateFormat: string
-  timeFormat: '12h' | '24h'
-  itemsPerPage: number
+  theme: "light" | "dark" | "auto";
+  language: string;
+  dateFormat: string;
+  timeFormat: "12h" | "24h";
+  itemsPerPage: number;
 
   // Notifications
-  enableEmailNotifications: boolean
-  enablePushNotifications: boolean
-  notifyOnUpload: boolean
-  notifyOnDeviceChange: boolean
+  enableEmailNotifications: boolean;
+  enablePushNotifications: boolean;
+  notifyOnUpload: boolean;
+  notifyOnDeviceChange: boolean;
 
   // System (admin only)
-  enableUserRegistration?: boolean
-  requireEmailVerification?: boolean
-  maintenanceMode?: boolean
-  enableAuditLog?: boolean
+  enableUserRegistration?: boolean;
+  requireEmailVerification?: boolean;
+  maintenanceMode?: boolean;
+  enableAuditLog?: boolean;
 }
 
 export const settingsApi = {
   // Get current user's settings (merged with defaults)
-  get: () => api.get<{ settings: UserSettings }>('/api/settings'),
+  get: () => api.get<{ settings: UserSettings }>("/api/settings"),
 
   // Update current user's settings
   update: (settings: Partial<UserSettings>) =>
-    api.put<{ success: boolean; message: string }>('/api/settings', settings),
+    api.put<{ success: boolean; message: string }>("/api/settings", settings),
 
   // Get system-wide settings (admin only)
-  getSystem: () => api.get<{ settings: UserSettings }>('/api/settings/system'),
+  getSystem: () => api.get<{ settings: UserSettings }>("/api/settings/system"),
 
   // Update system-wide settings (admin only)
   updateSystem: (settings: Partial<UserSettings>) =>
-    api.put<{ success: boolean; message: string }>('/api/settings/system', settings),
+    api.put<{ success: boolean; message: string }>(
+      "/api/settings/system",
+      settings
+    ),
 
   // Reset a specific setting to default
   reset: (key: string) => api.delete(`/api/settings/${key}`),
 
-  // User preferences (including default template id)
-  getPreferences: () => api.get<{ defaultDeleteAfterDays: number | null; theme: string; language: string; timezone?: string; defaultTemplateId?: string | null }>('/api/settings/preferences'),
+  // User preferences (excluding default template - now managed by MAIE)
+  getPreferences: () =>
+    api.get<{
+      defaultDeleteAfterDays: number | null;
+      theme: string;
+      language: string;
+      timezone?: string;
+    }>("/api/settings/preferences"),
+};
+
+// ============================================
+// TEMPLATES API (proxied to external MAIE API)
+// ============================================
+
+export interface MAIETemplate {
+  id: string;
+  name: string;
+  description: string;
+  schema_url: string;
+  parameters: Record<string, any>;
+  example?: Record<string, any>;
+  prompt_template?: string; // detail only
+  schema_data?: Record<string, any>; // detail only
 }
 
-// ============================================
-// TEMPLATES API
-// ============================================
+// For creating templates (POST) - MAIE API accepts all fields
+export interface CreateTemplateDTO {
+  name: string;
+  description: string;
+  schema_data: Record<string, any>;
+  prompt_template?: string;
+  example?: Record<string, any>;
+}
 
-export interface TemplateItem {
-  id: string
-  name: string
-  content: string
-  ownerType: 'system' | 'user'
-  ownerId?: string | null
-  createdAt: string
-  updatedAt?: string
+// For updating templates (PUT) - MAIE API only accepts these fields
+// name/description are derived from schema_data.title and schema_data.description
+export interface UpdateTemplateDTO {
+  schema_data?: Record<string, any>;
+  prompt_template?: string;
+  example?: Record<string, any>;
 }
 
 export const templatesApi = {
-  list: () => api.get<{ templates: TemplateItem[] }>('/api/templates'),
-  create: (data: { name: string; content: string; ownerType: 'system' | 'user' }) => api.post<{ template: TemplateItem }>('/api/templates', data),
-  update: (id: string, data: { name?: string; content?: string }) => api.put<{ template: TemplateItem }>(`/api/templates/${id}`, data),
+  list: () => api.get<{ templates: MAIETemplate[] }>("/api/templates"),
+  get: (id: string) =>
+    api.get<{ template: MAIETemplate }>(`/api/templates/${id}`),
+  getSchema: (id: string) =>
+    api.get<{ schema: Record<string, any> }>(`/api/templates/${id}/schema`),
+  create: (data: CreateTemplateDTO) =>
+    api.post<{ template: MAIETemplate }>("/api/templates", data),
+  update: (id: string, data: UpdateTemplateDTO) =>
+    api.put<{ template: MAIETemplate }>(`/api/templates/${id}`, data),
   delete: (id: string) => api.delete(`/api/templates/${id}`),
-  setDefault: (id: string) => api.put(`/api/templates/${id}/default`),
-}
+};
 
-export default api
+export default api;

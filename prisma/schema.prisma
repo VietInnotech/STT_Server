@@ -62,7 +62,6 @@ model User {
   auditLogs          AuditLog[]
   sessions           Session[]
   settings           UserSettings?
-  templates          Template[]
 
   @@index([username])
   @@index([email])
@@ -101,10 +100,6 @@ model UserSettings {
   theme    String? @default("light")
   language String? @default("en")
   timezone String?
-
-  // Default template selected by the user (optional)
-  defaultTemplateId String?
-  defaultTemplate   Template? @relation(fields: [defaultTemplateId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -325,21 +320,4 @@ model FileShare {
   @@map("file_shares")
 }
 
-// Templates for user or system use. System templates available to all users; user templates scoped to owner.
-model Template {
-  id        String   @id @default(uuid())
-  name      String
-  content   String   // Template body/content (JSON or plain text)
-  ownerType String   // 'system' or 'user'
-  ownerId   String?  // If ownerType == 'user', reference to User.id
-  owner     User?    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Optional back relation if users choose this as their default template
-  userSettingsDefaults UserSettings[]
-
-  @@index([ownerId])
-  @@map("templates")
-}

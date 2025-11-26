@@ -1,33 +1,37 @@
-import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { Toaster } from 'react-hot-toast'
-import { useSocketStore } from './stores/socket'
-import { useAuthStore } from './stores/auth'
+import { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Toaster } from "react-hot-toast";
+import { useSocketStore } from "./stores/socket";
+import { useAuthStore } from "./stores/auth";
+import { useSettingsStore } from "./stores/settings";
 
 // Pages
-import LoginPage from './pages/LoginPage'
-import DashboardPage from './pages/DashboardPage'
-import DevicesPage from './pages/DevicesPage'
-import FilesPage from './pages/FilesPage'
-import UsersPage from './pages/UsersPage'
-import SettingsPage from './pages/SettingsPage'
-import TemplatesPage from './pages/TemplatesPage'
-import Layout from './components/Layout'
+import LoginPage from "./pages/LoginPage";
+import DashboardPage from "./pages/DashboardPage";
+import DevicesPage from "./pages/DevicesPage";
+import FilesPage from "./pages/FilesPage";
+import UsersPage from "./pages/UsersPage";
+import SettingsPage from "./pages/SettingsPage";
+import TemplatesPage from "./pages/TemplatesPage";
+import Layout from "./components/Layout";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
 function App() {
-  const connect = useSocketStore((state) => state.connect)
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
+  const connect = useSocketStore((state) => state.connect);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const loadSettings = useSettingsStore((state) => state.loadFromServer);
 
+  // Load settings from server when authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      connect()
+      loadSettings();
+      connect();
     }
-  }, [isAuthenticated, connect])
+  }, [isAuthenticated, connect, loadSettings]);
 
   return (
     <BrowserRouter>
@@ -51,7 +55,7 @@ function App() {
         </Route>
       </Routes>
     </BrowserRouter>
-  )
+  );
 }
 
-export default App
+export default App;

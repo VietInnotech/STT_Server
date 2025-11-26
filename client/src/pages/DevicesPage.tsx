@@ -1,82 +1,84 @@
-import { useState, useEffect } from 'react'
-import { Smartphone, Circle, Edit2 } from 'lucide-react'
-import { api } from '../lib/api'
-import { useSocketStore } from '../stores/socket'
-import toast from 'react-hot-toast'
+import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import { Smartphone, Circle, Edit2 } from "lucide-react";
+import { api } from "../lib/api";
+import { useSocketStore } from "../stores/socket";
+import toast from "react-hot-toast";
 
 interface Device {
-  id: string
-  deviceName: string
-  deviceId: string
-  ipAddress: string | null
-  macAddress: string | null
-  androidVersion: string | null
-  appVersion: string | null
-  isOnline: boolean
-  lastSeen: string
-  registeredAt: string
-  updatedAt: string
+  id: string;
+  deviceName: string;
+  deviceId: string;
+  ipAddress: string | null;
+  macAddress: string | null;
+  androidVersion: string | null;
+  appVersion: string | null;
+  isOnline: boolean;
+  lastSeen: string;
+  registeredAt: string;
+  updatedAt: string;
 }
 
 export default function DevicesPage() {
-  const [devices, setDevices] = useState<Device[]>([])
+  const { t } = useTranslation("devices");
+  const [devices, setDevices] = useState<Device[]>([]);
   // ticking state to force periodic re-render so relative "Last Seen" updates
   // for offline devices stay current without refetching data.
-  const [tick, setTick] = useState<number>(() => Date.now())
-  const [loading, setLoading] = useState(true)
-  const [editingDevice, setEditingDevice] = useState<string | null>(null)
-  const [newName, setNewName] = useState('')
-  const socket = useSocketStore((state) => state.socket)
+  const [tick, setTick] = useState<number>(() => Date.now());
+  const [loading, setLoading] = useState(true);
+  const [editingDevice, setEditingDevice] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const socket = useSocketStore((state) => state.socket);
 
   // Fetch devices from API
   const fetchDevices = async () => {
     try {
       // fetch all devices (online + offline)
-      const response = await api.get<{ devices: Device[] }>('/api/devices')
-      setDevices(response.data.devices)
+      const response = await api.get<{ devices: Device[] }>("/api/devices");
+      setDevices(response.data.devices);
     } catch (error) {
-      console.error('Failed to fetch devices:', error)
-      toast.error('Failed to load devices')
+      console.error("Failed to fetch devices:", error);
+      toast.error(t("failedToLoad"));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    fetchDevices()
-  }, [])
+    fetchDevices();
+  }, []);
 
   // update `tick` every minute so the UI refreshes relative times like "5 minutes ago"
   // for offline devices. We purposely only update a small piece of state to avoid
   // refetching or heavy work.
   useEffect(() => {
     const interval = setInterval(() => {
-      setTick(Date.now())
-    }, 60_000) // 60s
+      setTick(Date.now());
+    }, 60_000); // 60s
 
-    return () => clearInterval(interval)
-  }, [])
+    return () => clearInterval(interval);
+  }, []);
 
   // Listen for real-time device updates via Socket.IO
   useEffect(() => {
-    if (!socket) return
+    if (!socket) return;
 
     // server emits an array of currently online devices. Merge that into
     // the full device list so offline devices remain visible.
     const handleDevicesList = (onlineDevices: Device[]) => {
-      console.log('📱 Devices updated (online list):', onlineDevices)
+      console.log("📱 Devices updated (online list):", onlineDevices);
       setDevices((prev) => {
-        const nowIso = new Date().toISOString()
-        const byId = new Map<string, Device>()
+        const nowIso = new Date().toISOString();
+        const byId = new Map<string, Device>();
 
         // start with previous devices (clone to avoid mutating originals)
         for (const d of prev) {
-          byId.set(d.id, { ...d, isOnline: false })
+          byId.set(d.id, { ...d, isOnline: false });
         }
 
         // apply online devices updates
         for (const od of onlineDevices) {
-          const existing = byId.get(od.id)
+          const existing = byId.get(od.id);
           if (existing) {
             // merge known fields and mark online
             byId.set(od.id, {
@@ -90,113 +92,119 @@ export default function DevicesPage() {
               // server may include lastSeen; otherwise use now
               lastSeen: od.lastSeen || nowIso,
               updatedAt: od.updatedAt || existing.updatedAt,
-            })
+            });
           } else {
             // new device not present in prev list - add it
-            byId.set(od.id, { ...od, isOnline: true, lastSeen: od.lastSeen || nowIso })
+            byId.set(od.id, {
+              ...od,
+              isOnline: true,
+              lastSeen: od.lastSeen || nowIso,
+            });
           }
         }
 
         // return array sorted: online first, then offline by lastSeen desc
-        const merged = Array.from(byId.values())
+        const merged = Array.from(byId.values());
         merged.sort((a, b) => {
           if (a.isOnline === b.isOnline) {
-            return new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime()
+            return (
+              new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime()
+            );
           }
-          return a.isOnline ? -1 : 1
-        })
+          return a.isOnline ? -1 : 1;
+        });
 
-        return merged
-      })
-    }
+        return merged;
+      });
+    };
 
-    socket.on('devices:list', handleDevicesList)
+    socket.on("devices:list", handleDevicesList);
 
     return () => {
-      socket.off('devices:list', handleDevicesList)
-    }
-  }, [socket])
+      socket.off("devices:list", handleDevicesList);
+    };
+  }, [socket]);
 
   // Handle rename device
   const handleRename = async (deviceId: string) => {
     if (!newName.trim()) {
-      toast.error('Please enter a device name')
-      return
+      toast.error(t("enterDeviceName"));
+      return;
     }
 
     try {
       await api.put(`/api/devices/${deviceId}/name`, {
         deviceName: newName.trim(),
-      })
-      toast.success('Device renamed successfully')
-      setEditingDevice(null)
-      setNewName('')
-      fetchDevices()
+      });
+      toast.success(t("renameSuccess"));
+      setEditingDevice(null);
+      setNewName("");
+      fetchDevices();
     } catch (error) {
-      console.error('Failed to rename device:', error)
-      toast.error('Failed to rename device')
+      console.error("Failed to rename device:", error);
+      toast.error(t("renameFailed"));
     }
-  }
+  };
 
   // Format relative time - show "Now" if online, otherwise show time ago
   const formatLastSeen = (lastSeen: string, isOnline: boolean) => {
     if (isOnline) {
-      return 'Now'
+      return t("now");
     }
 
-    const date = new Date(lastSeen)
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const seconds = Math.floor(diff / 1000)
-    const minutes = Math.floor(seconds / 60)
-    const hours = Math.floor(minutes / 60)
-    const days = Math.floor(hours / 24)
+    const date = new Date(lastSeen);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
 
-    if (seconds < 60) return 'Just now'
-    if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`
-    if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`
-    if (days < 7) return `${days} day${days > 1 ? 's' : ''} ago`
-    return date.toLocaleDateString()
-  }
+    if (seconds < 60) return t("justNow");
+    if (minutes < 60) return t("minutesAgo", { count: minutes });
+    if (hours < 24) return t("hoursAgo", { count: hours });
+    if (days < 7) return t("daysAgo", { count: days });
+    return date.toLocaleDateString();
+  };
 
   // Determine device type: prefer explicit androidVersion, otherwise inspect deviceName/deviceId
-  const getDeviceType = (device: Device): 'Android' | 'Browser' => {
+  const getDeviceType = (device: Device): string => {
     // If server provides androidVersion, treat as Android
-    if (device.androidVersion) return 'Android'
+    if (device.androidVersion) return t("android");
 
     // Heuristics: deviceId or deviceName containing 'android' -> Android
-    const id = (device.deviceId || '').toLowerCase()
-    const name = (device.deviceName || '').toLowerCase()
-    if (id.includes('android') || name.includes('android')) return 'Android'
+    const id = (device.deviceId || "").toLowerCase();
+    const name = (device.deviceName || "").toLowerCase();
+    if (id.includes("android") || name.includes("android")) return t("android");
 
     // Default to Browser
-    return 'Browser'
-  }
+    return t("browser");
+  };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500">Loading devices...</div>
+        <div className="text-gray-500">{t("loading")}</div>
       </div>
-    )
+    );
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Devices</h2>
+          <h2 className="text-2xl font-bold text-gray-900">{t("title")}</h2>
           {(() => {
-            const onlineCount = devices.filter((d) => d.isOnline).length
-            const total = devices.length
+            const onlineCount = devices.filter((d) => d.isOnline).length;
+            const total = devices.length;
             // include `tick` to ensure the periodic updater state is referenced
             // which forces a re-render for relative times without lint errors.
-            void tick
+            void tick;
             return (
               <p className="text-sm text-gray-500 mt-1">
-                Real-time connected devices ({onlineCount} online, {total} total)
+                {t("subtitle", { online: onlineCount, total })}
               </p>
-            )
+            );
           })()}
         </div>
       </div>
@@ -204,10 +212,10 @@ export default function DevicesPage() {
       {devices.length === 0 ? (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
           <Smartphone className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No devices connected</h3>
-          <p className="text-gray-500">
-            Devices will appear here when they connect via Socket.IO
-          </p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">
+            {t("noDevices")}
+          </h3>
+          <p className="text-gray-500">{t("noDevicesDescription")}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -228,10 +236,10 @@ export default function DevicesPage() {
                         value={newName}
                         onChange={(e) => setNewName(e.target.value)}
                         onKeyPress={(e) => {
-                          if (e.key === 'Enter') handleRename(device.id)
+                          if (e.key === "Enter") handleRename(device.id);
                         }}
                         className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="Enter device name"
+                        placeholder={t("enterDeviceName")}
                         autoFocus
                       />
                     ) : (
@@ -240,42 +248,52 @@ export default function DevicesPage() {
                       </h3>
                     )}
                     <p className="text-sm text-gray-500 truncate">
-                      {device.ipAddress || 'Unknown IP'}
+                      {device.ipAddress || t("unknownIP")}
                     </p>
                   </div>
                 </div>
                 <Circle
-                  className={`h-3 w-3 flex-shrink-0 ${device.isOnline
-                      ? 'fill-green-500 text-green-500'
-                      : 'fill-gray-300 text-gray-300'
-                    }`}
+                  className={`h-3 w-3 flex-shrink-0 ${
+                    device.isOnline
+                      ? "fill-green-500 text-green-500"
+                      : "fill-gray-300 text-gray-300"
+                  }`}
                 />
               </div>
 
               <div className="pt-4 border-t border-gray-100 space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">Device Type</span>
-                  <span className="font-medium text-gray-700">{getDeviceType(device)}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">Status</span>
-                  <span
-                    className={`font-medium ${device.isOnline ? 'text-green-600' : 'text-gray-400'
-                      }`}
-                  >
-                    {device.isOnline ? 'Online' : 'Offline'}
+                  <span className="text-gray-500">{t("deviceType")}</span>
+                  <span className="font-medium text-gray-700">
+                    {getDeviceType(device)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">Last Seen</span>
-                  <span className={`font-medium ${device.isOnline ? 'text-green-600' : 'text-gray-700'}`}>
+                  <span className="text-gray-500">{t("status")}</span>
+                  <span
+                    className={`font-medium ${
+                      device.isOnline ? "text-green-600" : "text-gray-400"
+                    }`}
+                  >
+                    {device.isOnline ? t("online") : t("offline")}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">{t("lastSeen")}</span>
+                  <span
+                    className={`font-medium ${
+                      device.isOnline ? "text-green-600" : "text-gray-700"
+                    }`}
+                  >
                     {formatLastSeen(device.lastSeen, device.isOnline)}
                   </span>
                 </div>
                 {device.androidVersion && (
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500">Android</span>
-                    <span className="text-gray-700">{device.androidVersion}</span>
+                    <span className="text-gray-500">{t("android")}</span>
+                    <span className="text-gray-700">
+                      {device.androidVersion}
+                    </span>
                   </div>
                 )}
               </div>
@@ -287,28 +305,28 @@ export default function DevicesPage() {
                       onClick={() => handleRename(device.id)}
                       className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
                     >
-                      Save
+                      {t("save")}
                     </button>
                     <button
                       onClick={() => {
-                        setEditingDevice(null)
-                        setNewName('')
+                        setEditingDevice(null);
+                        setNewName("");
                       }}
                       className="flex-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium"
                     >
-                      Cancel
+                      {t("cancel")}
                     </button>
                   </>
                 ) : (
                   <button
                     onClick={() => {
-                      setEditingDevice(device.id)
-                      setNewName(device.deviceName)
+                      setEditingDevice(device.id);
+                      setNewName(device.deviceName);
                     }}
                     className="flex-1 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 text-sm font-medium flex items-center justify-center gap-2"
                   >
                     <Edit2 className="h-4 w-4" />
-                    Rename
+                    {t("rename")}
                   </button>
                 )}
               </div>
@@ -317,5 +335,5 @@ export default function DevicesPage() {
         </div>
       )}
     </div>
-  )
+  );
 }

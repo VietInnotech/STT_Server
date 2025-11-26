@@ -1,0 +1,90 @@
+{
+  "title": "Settings",
+  "subtitle": "Manage your preferences and system configuration",
+  "reload": "Reload",
+  "saveChanges": "Save Changes",
+  "saving": "Saving...",
+  "settingsSaved": "Settings saved successfully",
+  "failedToSave": "Failed to save settings",
+  "failedToLoad": "Failed to load settings",
+  "tabs": {
+    "profile": "Profile",
+    "files": "Files",
+    "security": "Security",
+    "ui": "UI & Display",
+    "notifications": "Notifications"
+  },
+  "profile": {
+    "title": "User Profile",
+    "username": "Username",
+    "email": "Email",
+    "fullName": "Full Name",
+    "contactAdmin": "Contact your administrator to update profile information"
+  },
+  "files": {
+    "title": "File Management",
+    "yourDefaultSetting": "Your Default Auto-Delete Setting",
+    "defaultAutoDelete": "Default auto-delete period for your uploads (days)",
+    "neverDelete": "Never delete (leave empty)",
+    "willBeDeleted": "Your files will be auto-deleted after {{days}} days by default",
+    "leaveEmpty": "Leave empty to never auto-delete your files (you can override per upload)",
+    "personalNote": "This is your personal default. When you upload files, they will use this setting automatically unless you specify a different value during upload.",
+    "preferencesSaved": "Preferences saved successfully",
+    "failedToSavePreferences": "Failed to save preferences",
+    "systemWideSettings": "System-Wide Settings",
+    "systemDefaultAutoDelete": "System default auto-delete (days)",
+    "adminOnly": "System-wide default (admin only)",
+    "maxFileSize": "Maximum file size (MB)",
+    "maxFileSizeDesc": "Maximum size for uploaded files",
+    "allowedTextFormats": "Allowed text formats"
+  },
+  "security": {
+    "title": "Security Settings",
+    "sessionTimeout": "Session timeout (days)",
+    "sessionTimeoutDesc": "How long to stay logged in before requiring re-authentication",
+    "minPasswordLength": "Minimum password length",
+    "requireStrongPassword": "Require strong passwords (uppercase, lowercase, number, special character)",
+    "enableAuditLog": "Enable audit logging (admin only)",
+    "auditLogNote": "Audit logs are permanent and cannot be automatically deleted. Only uploaded files can be set to auto-delete after N days in the Files settings.",
+    "twoFactor": {
+      "title": "Two-Factor Authentication (2FA)",
+      "enable": "Enable two-factor authentication (2FA)",
+      "description": "Add an extra layer of security by requiring a code from your authenticator app. You'll be asked to verify once per new device.",
+      "active": "Active",
+      "enabled": "2FA enabled successfully!",
+      "disabled": "2FA disabled successfully",
+      "failedToDisable": "Failed to disable 2FA",
+      "disableTitle": "Disable Two-Factor Authentication",
+      "disableWarning": "Disabling 2FA will make your account less secure. Are you sure you want to continue?",
+      "confirmPassword": "Confirm your password",
+      "enterPassword": "Enter your password",
+      "disabling": "Disabling...",
+      "disable2FA": "Disable 2FA"
+    },
+    "changePassword": {
+      "title": "Change Password",
+      "description": "To change your password, please contact your administrator or use the password change feature in your profile menu."
+    }
+  },
+  "ui": {
+    "title": "UI & Display Preferences",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeAuto": "Auto (system preference)",
+    "language": "Language",
+    "languageHint": "Change the display language of the application",
+    "dateFormat": "Date format",
+    "timeFormat": "Time format",
+    "time12h": "12-hour (2:30 PM)",
+    "time24h": "24-hour (14:30)",
+    "itemsPerPage": "Items per page"
+  },
+  "notifications": {
+    "title": "Notification Preferences",
+    "enableEmail": "Enable email notifications",
+    "enablePush": "Enable push notifications",
+    "notifyOnUpload": "Notify on file upload",
+    "notifyOnDeviceChange": "Notify on device status change"
+  }
+}
