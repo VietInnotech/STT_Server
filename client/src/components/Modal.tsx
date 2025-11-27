@@ -25,7 +25,7 @@ export default function Modal({
   children,
   footer,
   maxWidth = "xl",
-  fullHeight = false,
+  fullHeight: _fullHeight = false,
 }: ModalProps) {
   const isModalOpen = open ?? isOpen ?? false;
 

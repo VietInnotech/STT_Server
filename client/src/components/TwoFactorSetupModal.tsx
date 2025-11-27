@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import Modal from "./Modal";
+import FormLabel from "./FormLabel";
 import { api } from "../lib/api";
 import toast from "react-hot-toast";
 
@@ -201,9 +202,7 @@ export default function TwoFactorSetupModal({
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                {t("twoFactor.verificationCode")}
-              </label>
+              <FormLabel required>{t("twoFactor.verificationCode")}</FormLabel>
               <input
                 type="text"
                 value={token}

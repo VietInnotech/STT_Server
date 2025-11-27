@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import FormLabel from "./FormLabel";
 import type { ParsedField } from "../lib/schemaUtils";
 import { isEmpty } from "../lib/schemaUtils";
 
@@ -273,17 +274,13 @@ export default function FieldRenderer({
   value,
   depth = 0,
 }: FieldRendererProps) {
-  const { t } = useTranslation("common");
   return (
     <div className={`${depth > 0 ? "pl-2" : ""}`}>
       {/* Field Label */}
-      <div className="flex items-center gap-2 mb-1">
-        <span className="font-medium text-gray-900">{field.label}</span>
-        {field.required && (
-          <span className="px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-xs font-medium">
-            {t("required")}
-          </span>
-        )}
+      <div className="mb-1">
+        <FormLabel required={!!field.required}>
+          <span className="font-medium text-gray-900">{field.label}</span>
+        </FormLabel>
       </div>
 
       {/* Field Description */}

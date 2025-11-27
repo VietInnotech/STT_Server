@@ -13,6 +13,7 @@ import FilesPage from "./pages/FilesPage";
 import UsersPage from "./pages/UsersPage";
 import SettingsPage from "./pages/SettingsPage";
 import TemplatesPage from "./pages/TemplatesPage";
+import RolesPage from "./pages/RolesPage";
 import Layout from "./components/Layout";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -51,6 +52,7 @@ function App() {
           <Route path="files" element={<FilesPage />} />
           <Route path="templates" element={<TemplatesPage />} />
           <Route path="users" element={<UsersPage />} />
+          <Route path="roles" element={<RolesPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Routes>

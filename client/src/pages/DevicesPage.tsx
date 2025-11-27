@@ -4,6 +4,8 @@ import { Smartphone, Circle, Edit2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useSocketStore } from "../stores/socket";
 import toast from "react-hot-toast";
+import { usePermission } from "../hooks/usePermission";
+import { PERMISSIONS } from "../lib/permissions";
 
 interface Device {
   id: string;
@@ -21,6 +23,8 @@ interface Device {
 
 export default function DevicesPage() {
   const { t } = useTranslation("devices");
+  const { can } = usePermission();
+  const canWrite = can(PERMISSIONS.DEVICES_WRITE);
   const [devices, setDevices] = useState<Device[]>([]);
   // ticking state to force periodic re-render so relative "Last Seen" updates
   // for offline devices stay current without refetching data.
@@ -222,7 +226,7 @@ export default function DevicesPage() {
           {devices.map((device) => (
             <div
               key={device.id}
-              className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
+              className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow flex flex-col"
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3 flex-1">
@@ -298,7 +302,7 @@ export default function DevicesPage() {
                 )}
               </div>
 
-              <div className="pt-4 mt-4 border-t border-gray-100 flex gap-2">
+              <div className="pt-4 mt-auto border-t border-gray-100 flex gap-2">
                 {editingDevice === device.id ? (
                   <>
                     <button
@@ -317,7 +321,7 @@ export default function DevicesPage() {
                       {t("cancel")}
                     </button>
                   </>
-                ) : (
+                ) : canWrite ? (
                   <button
                     onClick={() => {
                       setEditingDevice(device.id);
@@ -328,7 +332,7 @@ export default function DevicesPage() {
                     <Edit2 className="h-4 w-4" />
                     {t("rename")}
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           ))}

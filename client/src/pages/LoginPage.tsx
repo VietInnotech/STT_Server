@@ -7,6 +7,7 @@ import { getDeviceFingerprint } from "../lib/utils";
 import toast from "react-hot-toast";
 import { LogIn } from "lucide-react";
 import TwoFactorVerifyModal from "../components/TwoFactorVerifyModal";
+import FormLabel from "../components/FormLabel";
 
 export default function LoginPage() {
   const { t } = useTranslation("auth");
@@ -56,6 +57,7 @@ export default function LoginPage() {
           email: user.email,
           role: user.role,
           fullName: user.fullName || undefined,
+          permissions: user.permissions || [],
         },
         token
       );
@@ -81,6 +83,7 @@ export default function LoginPage() {
         email: user.email,
         role: user.role,
         fullName: user.fullName || undefined,
+        permissions: user.permissions || [],
       },
       token
     );
@@ -105,12 +108,7 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label
-                htmlFor="username"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
-                {t("username")}
-              </label>
+              <FormLabel required>{t("username")}</FormLabel>
               <input
                 id="username"
                 type="text"
@@ -123,12 +121,7 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
-                {t("password")}
-              </label>
+              <FormLabel required>{t("password")}</FormLabel>
               <input
                 id="password"
                 type="password"

@@ -1,20 +1,18 @@
-import { useTranslation } from 'react-i18next'
-import { Globe } from 'lucide-react'
+import { useTranslation } from "react-i18next";
+import { Globe } from "lucide-react";
 
 const languages = [
-  { code: 'en', label: 'English', flag: '🇺🇸' },
-  { code: 'vi', label: 'Tiếng Việt', flag: '🇻🇳' },
-]
+  { code: "en", label: "English", flag: "🇺🇸" },
+  { code: "vi", label: "Tiếng Việt", flag: "🇻🇳" },
+];
 
 export default function LanguageSwitcher() {
-  const { i18n } = useTranslation()
-
-  const currentLang = languages.find((l) => l.code === i18n.language) || languages[0]
+  const { i18n } = useTranslation();
 
   const handleChange = (langCode: string) => {
-    i18n.changeLanguage(langCode)
+    i18n.changeLanguage(langCode);
     // Persist to localStorage (i18next-browser-languagedetector handles this)
-  }
+  };
 
   return (
     <div className="relative inline-block">
@@ -31,5 +29,5 @@ export default function LanguageSwitcher() {
       </select>
       <Globe className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500 pointer-events-none" />
     </div>
-  )
+  );
 }

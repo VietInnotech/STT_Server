@@ -12,6 +12,7 @@ import {
 import { usersApi } from "../lib/api";
 import { formatDate } from "../lib/formatters";
 import Modal from "../components/Modal";
+import FormLabel from "../components/FormLabel";
 import toast from "react-hot-toast";
 
 interface User {
@@ -194,7 +195,7 @@ export default function UsersPage() {
         {users.map((user) => (
           <div
             key={user.id}
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
+            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col"
           >
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-3">
@@ -249,7 +250,7 @@ export default function UsersPage() {
               )}
             </div>
 
-            <div className="flex gap-2 mt-4 pt-4 border-t border-gray-100">
+            <div className="flex gap-2 mt-auto pt-4 border-t border-gray-100">
               <button
                 onClick={() => handleOpenModal(user)}
                 className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
@@ -334,9 +335,7 @@ export default function UsersPage() {
         >
           <form id="user-form" onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t("username")}
-              </label>
+              <FormLabel required>{t("username")}</FormLabel>
               <input
                 type="text"
                 required
@@ -356,12 +355,9 @@ export default function UsersPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t("email")}
-              </label>
+              <FormLabel>{t("email")}</FormLabel>
               <input
                 type="email"
-                required
                 value={formData.email}
                 onChange={(e) =>
                   setFormData({ ...formData, email: e.target.value })
@@ -372,9 +368,7 @@ export default function UsersPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t("fullName")}
-              </label>
+              <FormLabel>{t("fullName")}</FormLabel>
               <input
                 type="text"
                 value={formData.fullName}
@@ -387,9 +381,7 @@ export default function UsersPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t("role")}
-              </label>
+              <FormLabel required>{t("role")}</FormLabel>
               <select
                 required
                 value={formData.roleId}
@@ -408,9 +400,9 @@ export default function UsersPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <FormLabel required={!editingUser}>
                 {t("password")} {editingUser && t("passwordKeepCurrent")}
-              </label>
+              </FormLabel>
               <input
                 type="password"
                 required={!editingUser}

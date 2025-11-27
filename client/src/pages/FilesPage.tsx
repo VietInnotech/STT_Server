@@ -18,6 +18,9 @@ import { Pagination } from "../components/Pagination";
 import toast from "react-hot-toast";
 import ShareFilesModal from "../components/ShareFilesModal";
 import Modal from "../components/Modal";
+import FormLabel from "../components/FormLabel";
+import { usePermission } from "../hooks/usePermission";
+import { PERMISSIONS } from "../lib/permissions";
 
 interface CombinedFile extends FileItem {
   type: "audio" | "text";
@@ -31,6 +34,9 @@ interface CombinedFile extends FileItem {
 export default function FilesPage() {
   const { t } = useTranslation("files");
   const itemsPerPage = useSettingsStore((s) => s.itemsPerPage);
+  const { can } = usePermission();
+  const canWrite = can(PERMISSIONS.FILES_WRITE);
+  const canDelete = can(PERMISSIONS.FILES_DELETE);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
   const [files, setFiles] = useState<CombinedFile[]>([]);
@@ -440,13 +446,15 @@ export default function FilesPage() {
           <p className="text-sm text-gray-500 mt-1">{t("subtitle")}</p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => setShowShareModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-          >
-            <Share2 className="h-4 w-4" />
-            {t("share")}
-          </button>
+          {canWrite && (
+            <button
+              onClick={() => setShowShareModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+            >
+              <Share2 className="h-4 w-4" />
+              {t("share")}
+            </button>
+          )}
           <input
             ref={audioInputRef}
             type="file"
@@ -499,30 +507,34 @@ export default function FilesPage() {
               handleFileUpload(file, "text");
             }}
           />
-          <button
-            onClick={() => audioInputRef.current?.click()}
-            disabled={uploading}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-          >
-            {uploading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="h-4 w-4" />
-            )}
-            {t("uploadAudio")}
-          </button>
-          <button
-            onClick={() => textInputRef.current?.click()}
-            disabled={uploading}
-            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
-          >
-            {uploading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="h-4 w-4" />
-            )}
-            {t("uploadText")}
-          </button>
+          {canWrite && (
+            <button
+              onClick={() => audioInputRef.current?.click()}
+              disabled={uploading}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+            >
+              {uploading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              {t("uploadAudio")}
+            </button>
+          )}
+          {canWrite && (
+            <button
+              onClick={() => textInputRef.current?.click()}
+              disabled={uploading}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+            >
+              {uploading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              {t("uploadText")}
+            </button>
+          )}
           <button
             onClick={fetchFiles}
             disabled={loading}
@@ -578,9 +590,7 @@ export default function FilesPage() {
         }
       >
         <div>
-          <label className="block text-sm font-medium text-gray-700">
-            {t("autoDeleteAfter")}
-          </label>
+          <FormLabel>{t("autoDeleteAfter")}</FormLabel>
           <input
             type="number"
             min={1}
@@ -1080,12 +1090,14 @@ export default function FilesPage() {
                         >
                           <Download className="h-4 w-4" />
                         </button>
-                        <button
-                          onClick={() => handleDelete(file)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {canDelete && (
+                          <button
+                            onClick={() => handleDelete(file)}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                         {/* If pair row or text file from android, show Compare action */}
                         {(file as any).isPair ||
                           (file.type === "text" &&

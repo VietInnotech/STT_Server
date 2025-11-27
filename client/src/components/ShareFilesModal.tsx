@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Modal from "./Modal";
+import FormLabel from "./FormLabel";
 import {
   usersApi,
   filesApi,
@@ -139,9 +140,7 @@ export default function ShareFilesModal({
     >
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            {t("shareModal.selectUsers")}
-          </label>
+          <FormLabel required>{t("shareModal.selectUsers")}</FormLabel>
           <div className="max-h-48 overflow-auto border rounded p-2">
             {users.length === 0 ? (
               <div className="text-sm text-gray-500">
@@ -169,9 +168,7 @@ export default function ShareFilesModal({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            {t("shareModal.selectFiles")}
-          </label>
+          <FormLabel required>{t("shareModal.selectFiles")}</FormLabel>
           <div className="max-h-64 overflow-auto border rounded p-2">
             {files.length === 0 ? (
               <div className="text-sm text-gray-500">
@@ -200,9 +197,7 @@ export default function ShareFilesModal({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            {t("shareModal.shareDuration")}
-          </label>
+          <FormLabel>{t("shareModal.shareDuration")}</FormLabel>
           <input
             type="number"
             min={1}

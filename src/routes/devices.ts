@@ -1,10 +1,16 @@
-import { Router } from 'express'
-import type { Request, Response } from 'express'
-import { prisma } from '../lib/prisma'
-import { authenticate, requireRole, type AuthRequest } from '../middleware/auth'
-import logger from '../lib/logger'
+import { Router } from "express";
+import type { Request, Response } from "express";
+import { prisma } from "../lib/prisma";
+import {
+  authenticate,
+  requireRole,
+  requirePermission,
+  type AuthRequest,
+} from "../middleware/auth";
+import { PERMISSIONS } from "../types/permissions";
+import logger from "../lib/logger";
 
-const router = Router()
+const router = Router();
 
 /**
  * @swagger
@@ -68,45 +74,50 @@ const router = Router()
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/', authenticate, requireRole('admin', 'user'), async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { online, limit = '50', offset = '0' } = req.query
+router.get(
+  "/",
+  authenticate,
+  requirePermission(PERMISSIONS.DEVICES_READ),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { online, limit = "50", offset = "0" } = req.query;
 
-    const where = online === 'true' ? { isOnline: true } : {}
+      const where = online === "true" ? { isOnline: true } : {};
 
-    const devices = await prisma.device.findMany({
-      where,
-      select: {
-        id: true,
-        deviceName: true,
-        deviceId: true,
-        ipAddress: true,
-        macAddress: true,
-        androidVersion: true,
-        appVersion: true,
-        isOnline: true,
-        lastSeen: true,
-        registeredAt: true,
-        updatedAt: true,
-      },
-      orderBy: [
-        { isOnline: 'desc' }, // Online devices first
-        { lastSeen: 'desc' },
-      ],
-      take: parseInt(String(limit)),
-      skip: parseInt(String(offset)),
-    })
+      const devices = await prisma.device.findMany({
+        where,
+        select: {
+          id: true,
+          deviceName: true,
+          deviceId: true,
+          ipAddress: true,
+          macAddress: true,
+          androidVersion: true,
+          appVersion: true,
+          isOnline: true,
+          lastSeen: true,
+          registeredAt: true,
+          updatedAt: true,
+        },
+        orderBy: [
+          { isOnline: "desc" }, // Online devices first
+          { lastSeen: "desc" },
+        ],
+        take: parseInt(String(limit)),
+        skip: parseInt(String(offset)),
+      });
 
-    res.json({
-      success: true,
-      devices,
-      count: devices.length,
-    })
-  } catch (error) {
-    logger.error('Error fetching devices:', error)
-    res.status(500).json({ error: 'Failed to fetch devices' })
+      res.json({
+        success: true,
+        devices,
+        count: devices.length,
+      });
+    } catch (error) {
+      logger.error("Error fetching devices:", error);
+      res.status(500).json({ error: "Failed to fetch devices" });
+    }
   }
-})
+);
 
 /**
  * @swagger
@@ -157,58 +168,63 @@ router.get('/', authenticate, requireRole('admin', 'user'), async (req: Request,
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/:id', authenticate, requireRole('admin', 'user'), async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params
+router.get(
+  "/:id",
+  authenticate,
+  requirePermission(PERMISSIONS.DEVICES_READ),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
 
-    const device = await prisma.device.findUnique({
-      where: { id },
-      include: {
-        audioFiles: {
-          select: {
-            id: true,
-            filename: true,
-            fileSize: true,
-            uploadedAt: true,
+      const device = await prisma.device.findUnique({
+        where: { id },
+        include: {
+          audioFiles: {
+            select: {
+              id: true,
+              filename: true,
+              fileSize: true,
+              uploadedAt: true,
+            },
+            take: 10,
+            orderBy: { uploadedAt: "desc" },
           },
-          take: 10,
-          orderBy: { uploadedAt: 'desc' },
-        },
-        textFiles: {
-          select: {
-            id: true,
-            filename: true,
-            fileSize: true,
-            uploadedAt: true,
+          textFiles: {
+            select: {
+              id: true,
+              filename: true,
+              fileSize: true,
+              uploadedAt: true,
+            },
+            take: 10,
+            orderBy: { uploadedAt: "desc" },
           },
-          take: 10,
-          orderBy: { uploadedAt: 'desc' },
-        },
-        uptimeHistory: {
-          select: {
-            status: true,
-            timestamp: true,
+          uptimeHistory: {
+            select: {
+              status: true,
+              timestamp: true,
+            },
+            take: 20,
+            orderBy: { timestamp: "desc" },
           },
-          take: 20,
-          orderBy: { timestamp: 'desc' },
         },
-      },
-    })
+      });
 
-    if (!device) {
-      res.status(404).json({ error: 'Device not found' })
-      return
+      if (!device) {
+        res.status(404).json({ error: "Device not found" });
+        return;
+      }
+
+      res.json({
+        success: true,
+        device,
+      });
+    } catch (error) {
+      logger.error("Error fetching device:", error);
+      res.status(500).json({ error: "Failed to fetch device" });
     }
-
-    res.json({
-      success: true,
-      device,
-    })
-  } catch (error) {
-    logger.error('Error fetching device:', error)
-    res.status(500).json({ error: 'Failed to fetch device' })
   }
-})
+);
 
 /**
  * @swagger
@@ -278,63 +294,75 @@ router.get('/:id', authenticate, requireRole('admin', 'user'), async (req: Reque
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.put('/:id/name', authenticate, requireRole('admin', 'user'), async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params
-    const { deviceName } = req.body
+router.put(
+  "/:id/name",
+  authenticate,
+  requirePermission(PERMISSIONS.DEVICES_WRITE),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const { deviceName } = req.body;
 
-    if (!deviceName || typeof deviceName !== 'string' || deviceName.trim().length === 0) {
-      res.status(400).json({ error: 'Device name is required' })
-      return
-    }
+      if (
+        !deviceName ||
+        typeof deviceName !== "string" ||
+        deviceName.trim().length === 0
+      ) {
+        res.status(400).json({ error: "Device name is required" });
+        return;
+      }
 
-    // Check if device exists
-    const existingDevice = await prisma.device.findUnique({
-      where: { id },
-    })
+      // Check if device exists
+      const existingDevice = await prisma.device.findUnique({
+        where: { id },
+      });
 
-    if (!existingDevice) {
-      res.status(404).json({ error: 'Device not found' })
-      return
-    }
+      if (!existingDevice) {
+        res.status(404).json({ error: "Device not found" });
+        return;
+      }
 
-    // Update device name
-    const updatedDevice = await prisma.device.update({
-      where: { id },
-      data: { deviceName: deviceName.trim() },
-    })
+      // Update device name
+      const updatedDevice = await prisma.device.update({
+        where: { id },
+        data: { deviceName: deviceName.trim() },
+      });
 
-    // Create audit log
-    if (req.user) {
-      await prisma.auditLog.create({
-        data: {
-          userId: req.user.userId,
-          action: 'device.rename',
-          resource: 'device',
-          resourceId: id,
-          details: { oldName: existingDevice.deviceName, newName: deviceName.trim() },
-          ipAddress: req.ip || req.socket.remoteAddress || 'unknown',
-          userAgent: req.headers['user-agent'] || 'unknown',
+      // Create audit log
+      if (req.user) {
+        await prisma.auditLog.create({
+          data: {
+            userId: req.user.userId,
+            action: "device.rename",
+            resource: "device",
+            resourceId: id,
+            details: {
+              oldName: existingDevice.deviceName,
+              newName: deviceName.trim(),
+            },
+            ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+            userAgent: req.headers["user-agent"] || "unknown",
+          },
+        });
+      }
+
+      res.json({
+        success: true,
+        device: {
+          id: updatedDevice.id,
+          deviceName: updatedDevice.deviceName,
+          deviceId: updatedDevice.deviceId,
+          ipAddress: updatedDevice.ipAddress,
+          isOnline: updatedDevice.isOnline,
+          lastSeen: updatedDevice.lastSeen,
         },
-      })
+      });
+    } catch (error) {
+      logger.error("Error updating device name:", error);
+      res.status(500).json({ error: "Failed to update device name" });
     }
-
-    res.json({
-      success: true,
-      device: {
-        id: updatedDevice.id,
-        deviceName: updatedDevice.deviceName,
-        deviceId: updatedDevice.deviceId,
-        ipAddress: updatedDevice.ipAddress,
-        isOnline: updatedDevice.isOnline,
-        lastSeen: updatedDevice.lastSeen,
-      },
-    })
-  } catch (error) {
-    logger.error('Error updating device name:', error)
-    res.status(500).json({ error: 'Failed to update device name' })
   }
-})
+);
 
 /**
  * @swagger
@@ -392,48 +420,56 @@ router.put('/:id/name', authenticate, requireRole('admin', 'user'), async (req: 
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.delete('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params
+router.delete(
+  "/:id",
+  authenticate,
+  requirePermission(PERMISSIONS.DEVICES_DELETE),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
 
-    // Check if device exists
-    const device = await prisma.device.findUnique({
-      where: { id },
-    })
+      // Check if device exists
+      const device = await prisma.device.findUnique({
+        where: { id },
+      });
 
-    if (!device) {
-      res.status(404).json({ error: 'Device not found' })
-      return
+      if (!device) {
+        res.status(404).json({ error: "Device not found" });
+        return;
+      }
+
+      // Delete device (cascade will delete related files and history)
+      await prisma.device.delete({
+        where: { id },
+      });
+
+      // Create audit log
+      if (req.user) {
+        await prisma.auditLog.create({
+          data: {
+            userId: req.user.userId,
+            action: "device.delete",
+            resource: "device",
+            resourceId: id,
+            details: {
+              deviceName: device.deviceName,
+              deviceId: device.deviceId,
+            },
+            ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+            userAgent: req.headers["user-agent"] || "unknown",
+          },
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Device deleted successfully",
+      });
+    } catch (error) {
+      logger.error("Error deleting device:", error);
+      res.status(500).json({ error: "Failed to delete device" });
     }
-
-    // Delete device (cascade will delete related files and history)
-    await prisma.device.delete({
-      where: { id },
-    })
-
-    // Create audit log
-    if (req.user) {
-      await prisma.auditLog.create({
-        data: {
-          userId: req.user.userId,
-          action: 'device.delete',
-          resource: 'device',
-          resourceId: id,
-          details: { deviceName: device.deviceName, deviceId: device.deviceId },
-          ipAddress: req.ip || req.socket.remoteAddress || 'unknown',
-          userAgent: req.headers['user-agent'] || 'unknown',
-        },
-      })
-    }
-
-    res.json({
-      success: true,
-      message: 'Device deleted successfully',
-    })
-  } catch (error) {
-    logger.error('Error deleting device:', error)
-    res.status(500).json({ error: 'Failed to delete device' })
   }
-})
+);
 
-export default router
+export default router;

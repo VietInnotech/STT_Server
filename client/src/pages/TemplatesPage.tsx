@@ -11,12 +11,8 @@ import {
 } from "../lib/api";
 import TemplatePreview from "../components/TemplatePreview";
 import SchemaOverview from "../components/SchemaOverview";
-import {
-  parseSchema,
-  formatFieldName,
-  getTypeLabel,
-  getTypeIcon,
-} from "../lib/schemaUtils";
+import { formatFieldName, getTypeLabel, getTypeIcon } from "../lib/schemaUtils";
+import FormLabel from "../components/FormLabel";
 
 export default function TemplatesPage() {
   const { t } = useTranslation("templates");
@@ -645,7 +641,7 @@ function ParametersList({ parameters }: { parameters: Record<string, any> }) {
 function TemplateForm({
   initial,
   onSave,
-  onCancel,
+  onCancel: _onCancel,
   formId,
   mode = "create",
 }: {
@@ -759,9 +755,7 @@ function TemplateForm({
   return (
     <form id={formId} onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          {t("form.name")} *
-        </label>
+        <FormLabel required>{t("form.name")}</FormLabel>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -776,9 +770,7 @@ function TemplateForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          {t("form.description")} *
-        </label>
+        <FormLabel required>{t("form.description")}</FormLabel>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -794,9 +786,7 @@ function TemplateForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          {t("form.jsonSchema")} *
-        </label>
+        <FormLabel required>{t("form.jsonSchema")}</FormLabel>
         <textarea
           value={schema}
           onChange={(e) => setSchema(e.target.value)}
@@ -812,9 +802,7 @@ function TemplateForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          {t("form.promptTemplate")}
-        </label>
+        <FormLabel>{t("form.promptTemplate")}</FormLabel>
         <textarea
           value={promptTemplate}
           onChange={(e) => setPromptTemplate(e.target.value)}
@@ -825,9 +813,7 @@ function TemplateForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          {t("form.exampleJson")}
-        </label>
+        <FormLabel>{t("form.exampleJson")}</FormLabel>
         <textarea
           value={example}
           onChange={(e) => setExample(e.target.value)}

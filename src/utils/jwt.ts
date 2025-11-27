@@ -1,14 +1,15 @@
-import jwt from 'jsonwebtoken'
+import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d'
+const JWT_SECRET =
+  process.env.JWT_SECRET || "your-secret-key-change-in-production";
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 
 export interface JwtPayload {
-  userId: string
-  username: string
-  email: string
-  roleId: string
-  roleName: string
+  userId: string;
+  username: string;
+  email: string | null;
+  roleId: string;
+  roleName: string;
 }
 
 /**
@@ -17,14 +18,14 @@ export interface JwtPayload {
 export function generateToken(payload: JwtPayload): string {
   return jwt.sign(payload, JWT_SECRET, {
     expiresIn: JWT_EXPIRES_IN as string,
-  } as jwt.SignOptions)
+  } as jwt.SignOptions);
 }
 
 /**
  * Verify and decode JWT token
  */
 export function verifyToken(token: string): JwtPayload {
-  return jwt.verify(token, JWT_SECRET) as JwtPayload
+  return jwt.verify(token, JWT_SECRET) as JwtPayload;
 }
 
 /**
@@ -32,8 +33,8 @@ export function verifyToken(token: string): JwtPayload {
  */
 export function decodeToken(token: string): JwtPayload | null {
   try {
-    return jwt.decode(token) as JwtPayload
+    return jwt.decode(token) as JwtPayload;
   } catch {
-    return null
+    return null;
   }
 }

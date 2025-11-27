@@ -19,6 +19,7 @@ import {
 import toast from "react-hot-toast";
 import TwoFactorSetupModal from "../components/TwoFactorSetupModal";
 import Modal from "../components/Modal";
+import { PERMISSIONS, hasPermission } from "../lib/permissions";
 
 type TabType = "profile" | "files" | "security" | "ui" | "notifications";
 
@@ -30,7 +31,10 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const user = useAuthStore((state) => state.user);
-  const isAdmin = user?.role === "admin";
+  const canWriteSettings = hasPermission(
+    user?.permissions,
+    PERMISSIONS.SETTINGS_WRITE
+  );
 
   // Settings store
   const dateFormat = useSettingsStore((s) => s.dateFormat);
@@ -343,7 +347,7 @@ export default function SettingsPage() {
               </div>
 
               {/* System-wide settings (admin only) */}
-              {isAdmin && (
+              {canWriteSettings && (
                 <div>
                   <h3 className="text-sm font-semibold text-gray-900 mb-3">
                     {t("files.systemWideSettings")}
@@ -454,7 +458,7 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              {isAdmin && (
+              {canWriteSettings && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">

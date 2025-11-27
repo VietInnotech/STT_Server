@@ -104,6 +104,7 @@ export interface LoginResponse {
     fullName: string | null;
     role: string;
     roleId: string;
+    permissions?: string[];
   };
   token?: string;
   requires2FA?: boolean;
@@ -543,6 +544,57 @@ export const templatesApi = {
   update: (id: string, data: UpdateTemplateDTO) =>
     api.put<{ template: MAIETemplate }>(`/api/templates/${id}`, data),
   delete: (id: string) => api.delete(`/api/templates/${id}`),
+};
+
+// ============================================
+// ROLES API
+// ============================================
+
+export interface Role {
+  id: string;
+  name: string;
+  description: string | null;
+  permissions: string[];
+  userCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PermissionsResponse {
+  permissions: string[];
+  categories: Record<string, string[]>;
+}
+
+export interface CreateRoleRequest {
+  name: string;
+  description?: string;
+  permissions: string[];
+}
+
+export interface UpdateRoleRequest {
+  description?: string;
+  permissions?: string[];
+}
+
+export const rolesApi = {
+  // List all roles with user counts
+  list: () => api.get<{ roles: Role[] }>("/api/roles"),
+
+  // Get single role by ID
+  get: (id: string) => api.get<Role>(`/api/roles/${id}`),
+
+  // Get all available permissions organized by category
+  getPermissions: () => api.get<PermissionsResponse>("/api/roles/permissions"),
+
+  // Create new role
+  create: (data: CreateRoleRequest) => api.post<Role>("/api/roles", data),
+
+  // Update existing role
+  update: (id: string, data: UpdateRoleRequest) =>
+    api.put<Role>(`/api/roles/${id}`, data),
+
+  // Delete role
+  delete: (id: string) => api.delete(`/api/roles/${id}`),
 };
 
 export default api;

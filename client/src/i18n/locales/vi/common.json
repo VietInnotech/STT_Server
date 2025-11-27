@@ -22,6 +22,7 @@
   "offline": "Ngoại tuyến",
   "noData": "Không có dữ liệu",
   "required": "Bắt buộc",
+  "optional": "Tùy chọn",
   "notSpecified": "Không xác định",
   "item": "Mục",
   "field": "trường",
@@ -56,6 +57,7 @@
     "files": "Tệp tin",
     "templates": "Mẫu báo cáo",
     "users": "Người dùng",
+    "roles": "Vai trò",
     "settings": "Cài đặt"
   }
 }

@@ -4,8 +4,10 @@ import { prisma } from "../lib/prisma";
 import {
   authenticate,
   requireRole,
+  requirePermission,
   type AuthRequest,
 } from "../middleware/auth";
+import { PERMISSIONS } from "../types/permissions";
 import logger from "../lib/logger";
 
 const router = Router();
@@ -229,11 +231,11 @@ router.put("/", async (req: AuthRequest, res: Response): Promise<void> => {
 });
 
 /**
- * GET /api/settings/system - Get system-wide settings (admin only)
+ * GET /api/settings/system - Get system-wide settings (requires settings.write permission)
  */
 router.get(
   "/system",
-  requireRole("admin"),
+  requirePermission(PERMISSIONS.SETTINGS_WRITE),
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const systemSettings = await prisma.systemConfig.findMany({
@@ -264,11 +266,11 @@ router.get(
 );
 
 /**
- * PUT /api/settings/system - Update system-wide settings (admin only)
+ * PUT /api/settings/system - Update system-wide settings (requires settings.write permission)
  */
 router.put(
   "/system",
-  requireRole("admin"),
+  requirePermission(PERMISSIONS.SETTINGS_WRITE),
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const updates = req.body;
@@ -469,12 +471,9 @@ router.put(
           defaultDeleteAfterDays < 1 ||
           defaultDeleteAfterDays > 365
         ) {
-          res
-            .status(400)
-            .json({
-              error:
-                "defaultDeleteAfterDays must be between 1 and 365, or null",
-            });
+          res.status(400).json({
+            error: "defaultDeleteAfterDays must be between 1 and 365, or null",
+          });
           return;
         }
       }

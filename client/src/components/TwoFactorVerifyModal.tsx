@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import Modal from "./Modal";
+import FormLabel from "./FormLabel";
 import { api } from "../lib/api";
 import toast from "react-hot-toast";
 import { getDeviceFingerprint } from "../lib/utils";
@@ -105,11 +106,11 @@ export default function TwoFactorVerifyModal({
         </div>
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">
+          <FormLabel required>
             {useBackupCode
               ? t("twoFactor.backupCode")
               : t("twoFactor.verificationCode")}
-          </label>
+          </FormLabel>
           <input
             type="text"
             value={token}

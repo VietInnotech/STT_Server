@@ -8,6 +8,7 @@ import {
   LogOut,
   Menu,
   X,
+  Shield,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -15,6 +16,7 @@ import { useAuthStore } from "../stores/auth";
 import { useSocketStore } from "../stores/socket";
 import { cn } from "../lib/utils";
 import Modal from "./Modal";
+import { PERMISSIONS, hasPermission } from "../lib/permissions";
 
 const baseNavigation = [
   { name: "nav.dashboard", href: "/", icon: LayoutDashboard },
@@ -23,7 +25,21 @@ const baseNavigation = [
   { name: "nav.templates", href: "/templates", icon: FileAudio },
 ];
 
-const adminNavigation = [{ name: "nav.users", href: "/users", icon: Users }];
+// Admin navigation items with their required permissions
+const adminNavigation = [
+  {
+    name: "nav.users",
+    href: "/users",
+    icon: Users,
+    permission: PERMISSIONS.USERS_READ,
+  },
+  {
+    name: "nav.roles",
+    href: "/roles",
+    icon: Shield,
+    permission: PERMISSIONS.ROLES_READ,
+  },
+];
 
 export default function Layout() {
   const { t } = useTranslation("common");
@@ -133,9 +149,12 @@ export default function Layout() {
               );
             })}
 
-            {/** Admin-only nav **/}
-            {user?.role === "admin" &&
-              adminNavigation.map((item) => {
+            {/** Admin-only nav - now based on permissions **/}
+            {adminNavigation
+              .filter((item) =>
+                hasPermission(user?.permissions, item.permission)
+              )
+              .map((item) => {
                 const isActive = location.pathname === item.href;
                 return (
                   <Link
@@ -185,10 +204,11 @@ export default function Layout() {
           <h2 className="text-lg font-semibold text-gray-900">
             {(() => {
               if (location.pathname === "/settings") return t("nav.settings");
-              const all =
-                user?.role === "admin"
-                  ? [...baseNavigation, ...adminNavigation]
-                  : baseNavigation;
+              // Include admin nav items that user has permission for
+              const visibleAdminNav = adminNavigation.filter((item) =>
+                hasPermission(user?.permissions, item.permission)
+              );
+              const all = [...baseNavigation, ...visibleAdminNav];
               const found = all.find(
                 (it: any) => it.href === location.pathname
               );

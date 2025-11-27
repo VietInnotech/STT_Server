@@ -87,7 +87,12 @@ router.get("/", async (req: AuthRequest, res: Response) => {
  */
 router.get("/:id", async (req: AuthRequest, res: Response) => {
   try {
-    const { data } = await maieApi.getTemplate(req.params.id);
+    const templateId = req.params.id;
+    if (!templateId) {
+      res.status(400).json({ error: "Template ID required" });
+      return;
+    }
+    const { data } = await maieApi.getTemplate(templateId);
     res.json({ template: data });
   } catch (err) {
     const { status, error } = handleMaieError(err, "Failed to fetch template");
@@ -121,7 +126,12 @@ router.get("/:id", async (req: AuthRequest, res: Response) => {
  */
 router.get("/:id/schema", async (req: AuthRequest, res: Response) => {
   try {
-    const { data } = await maieApi.getTemplateSchema(req.params.id);
+    const templateId = req.params.id;
+    if (!templateId) {
+      res.status(400).json({ error: "Template ID required" });
+      return;
+    }
+    const { data } = await maieApi.getTemplateSchema(templateId);
     res.json({ schema: data });
   } catch (err) {
     const { status, error } = handleMaieError(
@@ -183,10 +193,10 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     try {
       const body = req.body as CreateTemplateDTO;
-      if (!body.name || !body.description || !body.schema) {
+      if (!body.name || !body.description || !body.schema_data) {
         res
           .status(400)
-          .json({ error: "name, description, and schema are required" });
+          .json({ error: "name, description, and schema_data are required" });
         return;
       }
 
@@ -223,15 +233,20 @@ router.put(
   requireRole("admin"),
   async (req: AuthRequest, res: Response) => {
     try {
+      const templateId = req.params.id;
+      if (!templateId) {
+        res.status(400).json({ error: "Template ID required" });
+        return;
+      }
       const body = req.body as UpdateTemplateDTO;
-      const { data } = await maieApi.updateTemplate(req.params.id, body);
+      const { data } = await maieApi.updateTemplate(templateId, body);
 
       await prisma.auditLog.create({
         data: {
           userId: req.user!.userId,
           action: "template.update",
           resource: "template",
-          resourceId: req.params.id,
+          resourceId: templateId,
           details: { updatedFields: Object.keys(body) },
           ipAddress: req.ip || "unknown",
           userAgent: req.headers["user-agent"] || "unknown",
@@ -257,14 +272,19 @@ router.delete(
   requireRole("admin"),
   async (req: AuthRequest, res: Response) => {
     try {
-      await maieApi.deleteTemplate(req.params.id);
+      const templateId = req.params.id;
+      if (!templateId) {
+        res.status(400).json({ error: "Template ID required" });
+        return;
+      }
+      await maieApi.deleteTemplate(templateId);
 
       await prisma.auditLog.create({
         data: {
           userId: req.user!.userId,
           action: "template.delete",
           resource: "template",
-          resourceId: req.params.id,
+          resourceId: templateId,
           ipAddress: req.ip || "unknown",
           userAgent: req.headers["user-agent"] || "unknown",
         },

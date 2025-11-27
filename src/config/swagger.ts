@@ -153,6 +153,26 @@ const options: swaggerJsdoc.Options = {
             },
           },
         },
+        Role: {
+          type: "object",
+          description: "User role with permissions",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            name: { type: "string", description: "Role name (unique)" },
+            description: { type: "string", nullable: true },
+            permissions: {
+              type: "array",
+              items: { type: "string" },
+              description: "Array of permission strings",
+            },
+            userCount: {
+              type: "integer",
+              description: "Number of users with this role",
+            },
+            createdAt: { type: "string", format: "date-time" },
+            updatedAt: { type: "string", format: "date-time" },
+          },
+        },
       },
     },
     security: [
