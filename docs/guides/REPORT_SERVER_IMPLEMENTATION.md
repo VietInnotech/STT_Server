@@ -1,20 +1,23 @@
 # Report Server V2 - Implementation Guide
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Last Updated:** November 27, 2025  
 **Parent Document:** [`SYSTEM_INTEGRATION_PLAN.md`](../SYSTEM_INTEGRATION_PLAN.md)  
 **Audience:** Backend Engineers
+
+**Status:** ✅ **Phase 0 COMPLETE** - Security proxy layer implemented and tested
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Phase 0: MAIE Proxy Implementation](#phase-0-maie-proxy-implementation)
-3. [Phase 1: ProcessingResult Model](#phase-1-processingresult-model)
-4. [Phase 2: Search API](#phase-2-search-api)
-5. [Socket.IO Integration](#socketio-integration)
-6. [Testing Checklist](#testing-checklist)
+2. [Implementation Status](#implementation-status)
+3. [Phase 0: MAIE Proxy Implementation](#phase-0-maie-proxy-implementation)
+4. [Phase 1: ProcessingResult Model](#phase-1-processingresult-model)
+5. [Phase 2: Search API](#phase-2-search-api)
+6. [Socket.IO Integration](#socketio-integration)
+7. [Testing Checklist](#testing-checklist)
 
 ---
 
@@ -29,15 +32,305 @@ This guide covers the backend changes required in Report Server V2 to implement 
 3. **Map task IDs** - Return internal UUIDs, not raw MAIE task IDs
 4. **Transaction safety** - Create DB record first, then call MAIE
 
-### Files to Create/Modify
+### Files Created/Modified
 
-| File                    | Action    | Purpose                    |
-| ----------------------- | --------- | -------------------------- |
-| `src/routes/process.ts` | 🆕 Create | MAIE proxy endpoints       |
-| `src/lib/maieProxy.ts`  | 🆕 Create | Streaming proxy logic      |
-| `prisma/schema.prisma`  | ✏️ Modify | Add ProcessingResult model |
-| `src/routes/files.ts`   | ✏️ Modify | Add search endpoint        |
-| `src/lib/socketBus.ts`  | ✏️ Modify | Add task completion events |
+| File                    | Action    | Status | Purpose                    |
+| ----------------------- | --------- | ------ | -------------------------- |
+| `src/routes/process.ts` | 🆕 Create | ✅     | MAIE proxy endpoints       |
+| `src/lib/maieProxy.ts`  | 🆕 Create | ✅     | Streaming proxy logic      |
+| `prisma/schema.prisma`  | ✏️ Modify | ✅     | Add ProcessingResult model |
+| `src/lib/socketBus.ts`  | ✏️ Modify | ✅     | Add task completion events |
+| `index.ts`              | ✏️ Modify | ✅     | Register process routes    |
+
+---
+
+## Implementation Status
+
+### Phase 0: MAIE Proxy Implementation - ✅ COMPLETE
+
+**Status:** Fully implemented and tested  
+**Completion Date:** November 27, 2025
+
+#### Completed Tasks
+
+- [x] Dependencies installed (busboy, form-data)
+- [x] `src/lib/maieProxy.ts` created with streaming support
+- [x] `src/routes/process.ts` created with 5 endpoints
+- [x] ProcessingResult/Tag/ProcessingResultTag models added to schema
+- [x] Database migration executed
+- [x] Socket.IO emitToUser function added
+- [x] Routes registered in index.ts
+- [x] End-to-end testing verified
+
+#### Endpoints Implemented
+
+| Endpoint                      | Method | Purpose                       | Status    |
+| ----------------------------- | ------ | ----------------------------- | --------- |
+| `/api/process`                | POST   | Submit audio for processing   | ✅ Tested |
+| `/api/process/:taskId/status` | GET    | Check processing status       | ✅ Tested |
+| `/api/process/text`           | POST   | Submit text for summarization | ✅ Tested |
+| `/api/process/health`         | GET    | Check MAIE service health     | ✅ Tested |
+| `/api/process/pending`        | GET    | List user's pending tasks     | ✅ Tested |
+
+#### Key Features Implemented
+
+- ✅ Streaming multipart upload (no memory buffering)
+- ✅ Transaction safety (DB record created before MAIE call)
+- ✅ Internal task ID mapping (MAIE task_id hidden from clients)
+- ✅ MAIE API key protected (server-side only)
+- ✅ Socket.IO real-time task completion events
+- ✅ JWT authentication on all endpoints
+- ✅ Rate limiting via uploadLimiter middleware
+- ✅ Audit logging for all submissions
+- ✅ Error handling and logging
+
+#### Response Format Example
+
+```json
+{
+  "taskId": "0fbde145-72a5-46fc-8b02-3b38b9a66a83",
+  "status": "COMPLETE",
+  "result": {
+    "title": "Họp thảo luận lịch trình dự án mới",
+    "summary": "Cuộc họp bàn về lịch trình dự án...",
+    "transcript": "Good morning everyone...",
+    "tags": ["dự án mới", "lịch trình", "ngân sách"],
+    "keyTopics": ["Project Timeline", "Budget Approval"],
+    "asrConfidence": 1.0,
+    "processingTime": 3.01,
+    "audioDuration": 0
+  }
+}
+```
+
+**Note:** `asrConfidence` maps directly to MAIE's `asr_confidence_avg` metric for clarity.
+
+---
+
+## Phase 0: MAIE Proxy Implementation
+
+### Overview
+
+Phase 0 implements the critical security layer that:
+
+1. Proxies all MAIE requests through the backend
+2. Hides the MAIE API key from clients
+3. Maps MAIE task IDs to internal UUIDs
+4. Streams files without buffering
+5. Provides real-time status updates via Socket.IO
+
+### Step 1: Install Dependencies
+
+```bash
+bun add busboy form-data
+bun add -d @types/busboy
+```
+
+### Step 2: Create MAIE Proxy Service
+
+The proxy service (`src/lib/maieProxy.ts`) handles all communication with MAIE:
+
+**Key Functions:**
+
+- `submitToMaie(fileStream, filename, templateId, features)` - Submit audio with streaming
+- `getMaieStatus(taskId)` - Poll MAIE for task status
+- `submitTextToMaie(text, templateId)` - Submit text for summarization
+- `checkMaieHealth()` - Health check
+
+**Important:** Uses `form-data` library to stream files, never buffers in memory.
+
+### Step 3: Create Process Routes
+
+The routes layer (`src/routes/process.ts`) exposes five key endpoints:
+
+#### POST /api/process
+
+Submit audio file for processing (authenticated, rate-limited)
+
+**Request:**
+
+- Multipart form data
+- `file` - Audio file (required)
+- `template_id` - Template ID (optional)
+- `features` - Features to extract (default: "summary")
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "taskId": "internal-uuid-never-expose-maie-id",
+  "status": "PENDING",
+  "message": "Processing started"
+}
+```
+
+**Transaction Safety:**
+
+1. Create ProcessingResult record with status="pending"
+2. Submit to MAIE with streaming
+3. Update record with maieTaskId
+4. Return internal taskId (never expose MAIE's task_id)
+
+#### GET /api/process/:taskId/status
+
+Check processing status (authenticated)
+
+**Response on Processing:**
+
+```json
+{
+  "taskId": "internal-uuid",
+  "status": "PROCESSING_ASR",
+  "progress": 50
+}
+```
+
+**Response on Complete:**
+
+```json
+{
+  "taskId": "internal-uuid",
+  "status": "COMPLETE",
+  "result": {
+    "title": "...",
+    "summary": "...",
+    "transcript": "...",
+    "tags": ["..."],
+    "keyTopics": ["..."],
+    "asrConfidence": 0.95,
+    "processingTime": 3.01,
+    "audioDuration": 25.5
+  }
+}
+```
+
+#### POST /api/process/text
+
+Submit text for summarization (authenticated)
+
+**Request:**
+
+```json
+{
+  "text": "Meeting transcript...",
+  "templateId": "generic_summary_v2"
+}
+```
+
+**Response:** Same as audio upload - returns taskId for polling
+
+#### GET /api/process/health
+
+Check MAIE service health (authenticated)
+
+**Response:**
+
+```json
+{
+  "maie": "healthy",
+  "timestamp": "2025-11-27T08:45:43.592Z"
+}
+```
+
+#### GET /api/process/pending
+
+List user's pending processing tasks (authenticated, for fallback polling)
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "tasks": [
+    {
+      "taskId": "uuid",
+      "status": "PROCESSING_LLM",
+      "progress": 75,
+      "templateId": "generic_summary_v2",
+      "createdAt": "2025-11-27T08:45:00Z"
+    }
+  ]
+}
+```
+
+### Step 4: Update Prisma Schema
+
+Add models for storing processing results:
+
+```prisma
+model ProcessingResult {
+  id              String   @id @default(uuid())
+  title           String?
+  templateId      String?
+  maieTaskId      String?  @unique
+  maieStatus      String?
+  sourceAudioId   String?
+  summaryPreview  String?
+  confidence      Float?
+  processingTime  Float?
+  audioDuration   Float?
+  rtf             Float?
+  status          String   @default("pending")
+  errorMessage    String?
+  errorCode       String?
+  uploadedById    String?
+  uploadedBy      User?
+  tags            ProcessingResultTag[]
+  processedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Tag {
+  id      String   @id @default(uuid())
+  name    String   @unique
+  results ProcessingResultTag[]
+}
+
+model ProcessingResultTag {
+  id                  String
+  processingResultId  String
+  processingResult    ProcessingResult
+  tagId               String
+  tag                 Tag
+}
+```
+
+### Step 5: Run Migration
+
+```bash
+bun run db:migrate -- --name add_processing_result_model
+```
+
+### Step 6: Update socketBus.ts
+
+Add function to emit events to specific users:
+
+```typescript
+export function emitToUser(userId: string, event: string, data: unknown) {
+  const io = getIo();
+  io.to(userRoom(userId)).emit(event, data);
+}
+```
+
+### Step 7: Register Routes
+
+Add to `index.ts`:
+
+```typescript
+const processRouter = (await import("./src/routes/process")).default;
+app.use("/api/process", processRouter);
+```
+
+### Step 8: Environment Setup
+
+Add to `.env`:
+
+```env
+MAIE_API_URL=https://unvai.vietinnotech.com
+MAIE_API_KEY=your-secure-api-key
+```
 
 ---
 
@@ -56,21 +349,22 @@ bun add -d @types/busboy
 // src/lib/maieProxy.ts
 import FormData from "form-data";
 import { Readable } from "stream";
-import { logger } from "./logger";
+import logger from "./logger";
 
-const MAIE_URL = process.env.MAIE_URL || "http://localhost:8000";
+const MAIE_URL = process.env.MAIE_API_URL || "http://localhost:8000";
 const MAIE_API_KEY = process.env.MAIE_API_KEY;
 
 if (!MAIE_API_KEY) {
-  logger.error("MAIE_API_KEY environment variable is required");
+  logger.warn("MAIE_API_KEY not set - processing requests will fail");
 }
 
-interface MaieProcessResponse {
+export interface MaieProcessResponse {
   task_id: string;
   status: string;
 }
 
-interface MaieStatusResponse {
+export interface MaieStatusResponse {
+  task_id: string;
   status:
     | "PENDING"
     | "PREPROCESSING"
@@ -78,25 +372,51 @@ interface MaieStatusResponse {
     | "PROCESSING_LLM"
     | "COMPLETE"
     | "FAILED";
-  result?: {
-    results: {
-      summary: {
-        title: string;
-        content: string;
-        tags?: string[];
-        [key: string]: unknown;
-      };
-      transcript: string;
+  metrics?: {
+    input_duration_seconds: number;
+    processing_time_seconds: number;
+    rtf: number;
+    asr_confidence_avg: number;
+  };
+  results?: {
+    raw_transcript: string;
+    clean_transcript: string;
+    summary: {
+      title: string;
+      summary: string;
+      key_topics?: string[];
+      tags?: string[];
     };
   };
-  metrics?: {
-    asr_confidence_avg: number;
-    processing_time_seconds: number;
-    input_duration_seconds: number;
-    rtf: number;
-  };
-  error?: string;
-  error_code?: string;
+  error?: string | null;
+  error_code?: string | null;
+}
+
+export async function submitToMaie(
+  fileStream: Readable,
+  filename: string,
+  templateId?: string,
+  features: string = "summary"
+): Promise<MaieProcessResponse> {
+  const formData = new FormData();
+  formData.append("file", fileStream, { filename });
+  formData.append("features", features);
+  if (templateId) formData.append("template_id", templateId);
+
+  const response = await fetch(`${MAIE_URL}/v1/process`, {
+    method: "POST",
+    headers: {
+      "X-API-Key": MAIE_API_KEY!,
+      ...formData.getHeaders(),
+    },
+    // @ts-ignore
+    body: formData,
+    // @ts-ignore
+    duplex: "half",
+  });
+
+  if (!response.ok) throw new Error(`MAIE request failed: ${response.status}`);
+  return response.json();
 }
 
 /**

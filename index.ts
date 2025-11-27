@@ -335,6 +335,10 @@ app.use("/api/settings", settingsRouter);
 const rolesRouter = (await import("./src/routes/roles")).default;
 app.use("/api/roles", rolesRouter);
 
+// MAIE AI Processing proxy routes
+const processRouter = (await import("./src/routes/process")).default;
+app.use("/api/process", processRouter);
+
 // Vite Dev Server (Development) or Static Files (Production)
 if (isDev) {
   // Development: Use Vite dev server

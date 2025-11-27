@@ -56,13 +56,14 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relations
-  uploadedAudioFiles   AudioFile[]   @relation("UploadedBy")
-  uploadedTextFiles    TextFile[]    @relation("UploadedBy")
-  uploadedFilePairs    TextFilePair[]
-  auditLogs            AuditLog[]
-  sessions             Session[]
-  settings             UserSettings?
-  passwordResetTokens  PasswordResetToken[]
+  uploadedAudioFiles    AudioFile[]        @relation("UploadedBy")
+  uploadedTextFiles     TextFile[]         @relation("UploadedBy")
+  uploadedFilePairs     TextFilePair[]
+  auditLogs             AuditLog[]
+  sessions              Session[]
+  settings              UserSettings?
+  passwordResetTokens   PasswordResetToken[]
+  processingResults     ProcessingResult[]
 
   @@index([username])
   @@index([email])
@@ -144,9 +145,10 @@ model Device {
   updatedAt      DateTime @updatedAt
 
   // Relations
-  audioFiles    AudioFile[]
-  textFiles     TextFile[]
-  uptimeHistory UptimeHistory[]
+  audioFiles        AudioFile[]
+  textFiles         TextFile[]
+  uptimeHistory     UptimeHistory[]
+  processingResults ProcessingResult[]
 
   @@index([deviceId])
   @@index([isOnline])
@@ -197,6 +199,9 @@ model AudioFile {
 
   uploadedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  // Relations
+  processingResults ProcessingResult[]
 
   @@index([uploadedAt])
   @@index([deviceId])
@@ -335,6 +340,109 @@ model FileShare {
   @@index([sharedWithId])
   @@index([fileId])
   @@map("file_shares")
+}
+
+// ============================================
+// AI PROCESSING RESULTS (MAIE Integration)
+// ============================================
+
+// Processing results from MAIE AI - stores encrypted AI-generated summaries
+model ProcessingResult {
+  id              String   @id @default(uuid())
+
+  // Searchable metadata
+  title           String?
+  templateId      String?
+  templateName    String?
+
+  // MAIE task tracking (internal IDs only - never expose to clients)
+  maieTaskId      String?  @unique
+  maieStatus      String?
+
+  // Linked audio file (optional - can be null if source deleted)
+  sourceAudioId   String?
+  sourceAudio     AudioFile? @relation(fields: [sourceAudioId], references: [id], onDelete: SetNull)
+
+  // Content storage (encrypted for security)
+  summaryData     Bytes?    // Encrypted summary content
+  summaryIv       String?   // IV for AES decryption
+  transcriptData  Bytes?    // Encrypted transcript content
+  transcriptIv    String?   // IV for AES decryption
+  summaryPreview  String?   // Plaintext preview (first ~200 chars) for search results
+  summarySize     Int?      // Original summary size in bytes
+  transcriptSize  Int?      // Original transcript size in bytes
+
+  // Processing metrics from MAIE
+  confidence      Float?    // asr_confidence_avg from MAIE (0.0-1.0) - ASR transcription confidence
+  processingTime  Float?    // Processing time in seconds
+  audioDuration   Float?    // Input audio duration in seconds
+  rtf             Float?    // Real-time factor
+
+  // Raw MAIE output (encrypted, for debugging)
+  rawMaieOutput   String?
+
+  // Status tracking
+  status          String   @default("pending")  // pending, completed, failed
+  errorMessage    String?
+  errorCode       String?
+
+  // Ownership
+  deviceId        String?
+  device          Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  uploadedById    String?
+  uploadedBy      User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  // Tags (many-to-many via junction table)
+  tags            ProcessingResultTag[]
+
+  // Timestamps
+  processedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Auto-delete configuration
+  deleteAfterDays   Int?
+  scheduledDeleteAt DateTime?
+
+  @@index([title])
+  @@index([templateId])
+  @@index([status])
+  @@index([processedAt])
+  @@index([uploadedById])
+  @@index([deviceId])
+  @@index([scheduledDeleteAt])
+  @@map("processing_results")
+}
+
+// Tags for categorizing processing results
+model Tag {
+  id        String   @id @default(uuid())
+  name      String   @unique  // Normalized to lowercase
+
+  results   ProcessingResultTag[]
+
+  createdAt DateTime @default(now())
+
+  @@index([name])
+  @@map("tags")
+}
+
+// Junction table for many-to-many relationship between ProcessingResult and Tag
+model ProcessingResultTag {
+  id                  String           @id @default(uuid())
+
+  processingResultId  String
+  processingResult    ProcessingResult @relation(fields: [processingResultId], references: [id], onDelete: Cascade)
+
+  tagId               String
+  tag                 Tag              @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  createdAt           DateTime         @default(now())
+
+  @@unique([processingResultId, tagId])
+  @@index([processingResultId])
+  @@index([tagId])
+  @@map("processing_result_tags")
 }
 
 
