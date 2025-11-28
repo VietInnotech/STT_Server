@@ -30,7 +30,7 @@ import { PERMISSIONS } from "../lib/permissions";
 import SearchFiltersPanel, { type SearchFilters } from "./SearchFiltersPanel";
 
 // Fields to skip when dynamically rendering summaryData (already shown elsewhere or internal)
-const SKIP_FIELDS = new Set(["title", "summary", "content"]);
+const SKIP_FIELDS = new Set(["title", "content"]);
 
 // Format field name for display: "key_topics" -> "Key Topics"
 function formatFieldName(key: string): string {
@@ -805,17 +805,16 @@ export default function ProcessingResultsTab() {
                 <div className="flex-1 bg-gray-50 rounded-lg p-4 overflow-auto text-sm text-gray-700">
                   {activeTab === "summary" && (
                     <div className="space-y-6">
-                      {/* Main Summary Text */}
-                      <div className="whitespace-pre-wrap">
-                        {resultContent?.summary || t("noContent")}
-                      </div>
-
-                      {/* Dynamic fields from summaryData */}
-                      {resultContent?.summaryData && (
+                      {/* Dynamic fields from summaryData (includes summary as first field) */}
+                      {resultContent?.summaryData ? (
                         <SummaryDataSection
                           data={resultContent.summaryData}
                           t={t}
                         />
+                      ) : (
+                        <div className="whitespace-pre-wrap">
+                          {t("noContent")}
+                        </div>
                       )}
                     </div>
                   )}
