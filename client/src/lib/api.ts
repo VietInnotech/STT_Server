@@ -217,6 +217,26 @@ export interface TextFilePairItem {
   createdAt?: string;
 }
 
+export interface ProcessingResultItem {
+  id: string;
+  title: string | null;
+  templateId: string | null;
+  templateName: string | null;
+  summaryPreview: string | null;
+  tags: string[];
+  confidence: number | null;
+  processingTime: number | null;
+  audioDuration: number | null;
+  status: "pending" | "completed" | "failed";
+  uploadedBy?: {
+    id: string;
+    username: string;
+    fullName: string | null;
+  } | null;
+  processedAt: string | null;
+  createdAt: string;
+}
+
 export const filesApi = {
   // Audio files
   listAudio: (params?: {
@@ -331,6 +351,93 @@ export const filesApi = {
     deleteAfterDays?: number | null;
     pairName?: string;
   }) => api.post("/api/files/text-pair-android", payload),
+
+  // Processing Results (AI-processed results)
+  listResults: (params?: {
+    limit?: number;
+    offset?: number;
+    status?: "pending" | "completed" | "failed" | "all";
+    minConfidence?: number;
+    maxConfidence?: number;
+    tags?: string;
+    templateId?: string;
+    fromDate?: string;
+    toDate?: string;
+    sortBy?: "date" | "title" | "confidence" | "duration";
+    order?: "asc" | "desc";
+  }) =>
+    api.get<{
+      success: boolean;
+      results: ProcessingResultItem[];
+      pagination: {
+        total: number;
+        limit: number;
+        offset: number;
+        hasMore: boolean;
+      };
+    }>("/api/files/results", { params }),
+
+  getResult: (id: string) =>
+    api.get<{
+      success: boolean;
+      result: ProcessingResultItem & {
+        summary: string | null;
+        transcript: string | null;
+      };
+    }>(`/api/files/results/${id}`),
+
+  saveResult: (data: {
+    title: string;
+    summary: string;
+    transcript?: string;
+    templateId?: string;
+    templateName?: string;
+    tags?: string[];
+    keyTopics?: string[];
+    confidence?: number;
+    processingTime?: number;
+    audioDuration?: number;
+    deviceId?: string;
+    deleteAfterDays?: number;
+    sourceAudioId?: string;
+  }) =>
+    api.post<{
+      success: boolean;
+      result: ProcessingResultItem;
+    }>("/api/files/processing-result", data),
+
+  deleteResult: (id: string) => api.delete(`/api/files/results/${id}`),
+
+  searchResults: (params: {
+    q?: string;
+    tags?: string;
+    templateId?: string;
+    fromDate?: string;
+    toDate?: string;
+    minConfidence?: number;
+    maxConfidence?: number;
+    status?: "pending" | "completed" | "failed" | "all";
+    sortBy?: "date" | "title" | "confidence" | "duration";
+    order?: "asc" | "desc";
+    limit?: number;
+    offset?: number;
+  }) =>
+    api.get<{
+      success: boolean;
+      results: ProcessingResultItem[];
+      pagination: {
+        total: number;
+        limit: number;
+        offset: number;
+        hasMore: boolean;
+      };
+    }>("/api/files/search", { params }),
+
+  getTags: (params?: { limit?: number; q?: string }) =>
+    api.get<{
+      success: boolean;
+      tags: Array<{ name: string; count: number }>;
+    }>("/api/files/tags", { params }),
 };
 
 // ============================================
@@ -376,6 +483,46 @@ export const usersApi = {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
+  // Storage quota endpoints
+  getMyStorage: () =>
+    api.get<{
+      quotaBytes: string;
+      usedBytes: string;
+      availableBytes: string;
+      usagePercent: number;
+      quotaFormatted: string;
+      usedFormatted: string;
+      availableFormatted: string;
+      breakdown: {
+        audioBytes: string;
+        textBytes: string;
+        processingResultBytes: string;
+      };
+    }>("/api/users/storage"),
+  getStorage: (id: string) =>
+    api.get<{
+      userId: string;
+      username: string;
+      quotaBytes: string;
+      usedBytes: string;
+      availableBytes: string;
+      usagePercent: number;
+      quotaFormatted: string;
+      usedFormatted: string;
+      availableFormatted: string;
+      breakdown: {
+        audioBytes: string;
+        textBytes: string;
+        processingResultBytes: string;
+      };
+    }>(`/api/users/${id}/storage`),
+  updateQuota: (id: string, quotaBytes: string | number) =>
+    api.put<{
+      success: boolean;
+      message: string;
+      quotaBytes: string;
+      quotaFormatted: string;
+    }>(`/api/users/${id}/storage/quota`, { quotaBytes }),
 };
 
 // ============================================

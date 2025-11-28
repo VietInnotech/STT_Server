@@ -13,6 +13,10 @@ import {
 import { PERMISSIONS } from "../types/permissions";
 import logger from "../lib/logger";
 import { getIo, userRoom } from "../lib/socketBus";
+import {
+  checkStorageQuota,
+  updateUserStorageUsage,
+} from "../services/storageService";
 
 const router = Router();
 
@@ -108,6 +112,15 @@ router.post(
 
       if (!uploadedById) {
         return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      // Check storage quota before processing
+      const quotaCheck = await checkStorageQuota(uploadedById, req.file.size);
+      if (!quotaCheck.allowed) {
+        return res.status(413).json({
+          error: "Storage quota exceeded",
+          message: quotaCheck.reason,
+        });
       }
 
       // Get user's default deleteAfterDays if not explicitly provided
@@ -271,6 +284,17 @@ router.post(
         logger.error("Failed to create audit log for audio upload", logErr);
       }
 
+      // Update user's storage usage after successful upload
+      if (resolvedUploadedById) {
+        try {
+          await updateUserStorageUsage(resolvedUploadedById);
+        } catch (err) {
+          logger.warn("Failed to update storage usage after audio upload", {
+            err,
+          });
+        }
+      }
+
       return res.status(201).json({
         success: true,
         file: {
@@ -370,7 +394,18 @@ router.post(
 
       if (!uploadedById) {
         return res.status(401).json({ error: "User not authenticated" });
-      } // Get user's default deleteAfterDays if not explicitly provided
+      }
+
+      // Check storage quota before processing
+      const quotaCheck = await checkStorageQuota(uploadedById, req.file.size);
+      if (!quotaCheck.allowed) {
+        return res.status(413).json({
+          error: "Storage quota exceeded",
+          message: quotaCheck.reason,
+        });
+      }
+
+      // Get user's default deleteAfterDays if not explicitly provided
       let finalDeleteAfterDays = deleteAfterDays;
       if (finalDeleteAfterDays === undefined) {
         const userSettings = await prisma.userSettings.findUnique({
@@ -536,6 +571,17 @@ router.post(
         });
       } catch (logErr) {
         logger.error("Failed to create audit log for text upload", logErr);
+      }
+
+      // Update user's storage usage after successful upload
+      if (resolvedUploadedById) {
+        try {
+          await updateUserStorageUsage(resolvedUploadedById);
+        } catch (err) {
+          logger.warn("Failed to update storage usage after text upload", {
+            err,
+          });
+        }
       }
 
       return res.status(201).json({
@@ -1128,6 +1174,7 @@ router.get(
 
 /**
  * DELETE /api/files/audio/:id - Delete audio file
+ * Also cascade-deletes associated FileShare records
  */
 router.delete(
   "/audio/:id",
@@ -1137,19 +1184,59 @@ router.delete(
       const { id } = req.params;
       const isAdmin = req.user?.roleName === "admin";
 
-      if (!isAdmin) {
-        // Ensure file belongs to the user
-        const file = await prisma.audioFile.findUnique({ where: { id } });
-        if (!file)
-          return res.status(404).json({ error: "Audio file not found" });
-        if (file.uploadedById !== req.user?.userId) {
-          return res
-            .status(403)
-            .json({ error: "Forbidden: You cannot delete this file" });
+      // Fetch file to check ownership and get size for storage update
+      const file = await prisma.audioFile.findUnique({ where: { id } });
+      if (!file) {
+        return res.status(404).json({ error: "Audio file not found" });
+      }
+
+      if (!isAdmin && file.uploadedById !== req.user?.userId) {
+        return res
+          .status(403)
+          .json({ error: "Forbidden: You cannot delete this file" });
+      }
+
+      // Use transaction to delete FileShare records and the file atomically
+      await prisma.$transaction(async (tx) => {
+        // Delete all FileShare records referencing this audio file
+        await tx.fileShare.deleteMany({
+          where: { fileId: id, fileType: "audio" },
+        });
+        // Delete the audio file
+        await tx.audioFile.delete({ where: { id } });
+      });
+
+      // Update user's storage usage if file had an owner
+      if (file.uploadedById) {
+        try {
+          const { updateUserStorageUsage } = await import(
+            "../services/storageService"
+          );
+          await updateUserStorageUsage(file.uploadedById);
+        } catch (err) {
+          logger.warn("Failed to update storage usage after audio delete", {
+            err,
+          });
         }
       }
 
-      await prisma.audioFile.delete({ where: { id } });
+      // Audit log
+      try {
+        await prisma.auditLog.create({
+          data: {
+            userId: req.user?.userId,
+            action: "files.delete",
+            resource: "audio",
+            resourceId: id,
+            details: { filename: file.filename, fileSize: file.fileSize },
+            ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+            userAgent: req.headers["user-agent"] || "unknown",
+            success: true,
+          },
+        });
+      } catch (logErr) {
+        logger.error("Failed to create audit log for audio delete", logErr);
+      }
 
       return res.json({ success: true, message: "Audio file deleted" });
     } catch (error) {
@@ -1161,6 +1248,7 @@ router.delete(
 
 /**
  * DELETE /api/files/text/:id - Delete text file
+ * Also cascade-deletes associated FileShare records
  */
 router.delete(
   "/text/:id",
@@ -1170,18 +1258,59 @@ router.delete(
       const { id } = req.params;
       const isAdmin = req.user?.roleName === "admin";
 
-      if (!isAdmin) {
-        const file = await prisma.textFile.findUnique({ where: { id } });
-        if (!file)
-          return res.status(404).json({ error: "Text file not found" });
-        if (file.uploadedById !== req.user?.userId) {
-          return res
-            .status(403)
-            .json({ error: "Forbidden: You cannot delete this file" });
+      // Fetch file to check ownership and get size for storage update
+      const file = await prisma.textFile.findUnique({ where: { id } });
+      if (!file) {
+        return res.status(404).json({ error: "Text file not found" });
+      }
+
+      if (!isAdmin && file.uploadedById !== req.user?.userId) {
+        return res
+          .status(403)
+          .json({ error: "Forbidden: You cannot delete this file" });
+      }
+
+      // Use transaction to delete FileShare records and the file atomically
+      await prisma.$transaction(async (tx) => {
+        // Delete all FileShare records referencing this text file
+        await tx.fileShare.deleteMany({
+          where: { fileId: id, fileType: "text" },
+        });
+        // Delete the text file
+        await tx.textFile.delete({ where: { id } });
+      });
+
+      // Update user's storage usage if file had an owner
+      if (file.uploadedById) {
+        try {
+          const { updateUserStorageUsage } = await import(
+            "../services/storageService"
+          );
+          await updateUserStorageUsage(file.uploadedById);
+        } catch (err) {
+          logger.warn("Failed to update storage usage after text delete", {
+            err,
+          });
         }
       }
 
-      await prisma.textFile.delete({ where: { id } });
+      // Audit log
+      try {
+        await prisma.auditLog.create({
+          data: {
+            userId: req.user?.userId,
+            action: "files.delete",
+            resource: "text",
+            resourceId: id,
+            details: { filename: file.filename, fileSize: file.fileSize },
+            ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+            userAgent: req.headers["user-agent"] || "unknown",
+            success: true,
+          },
+        });
+      } catch (logErr) {
+        logger.error("Failed to create audit log for text delete", logErr);
+      }
 
       return res.json({ success: true, message: "Text file deleted" });
     } catch (error) {
@@ -1399,6 +1528,18 @@ router.post(
         return res.status(401).json({ error: "User not authenticated" });
       }
 
+      // Check storage quota before processing (calculate combined size)
+      const combinedSize =
+        Buffer.byteLength(summary, "utf8") +
+        Buffer.byteLength(realtime, "utf8");
+      const quotaCheck = await checkStorageQuota(uploadedById, combinedSize);
+      if (!quotaCheck.allowed) {
+        return res.status(413).json({
+          error: "Storage quota exceeded",
+          message: quotaCheck.reason,
+        });
+      }
+
       // Get default deleteAfterDays if not provided
       let finalDeleteAfterDays = deleteAfterDays;
       if (finalDeleteAfterDays === undefined) {
@@ -1519,6 +1660,17 @@ router.post(
         logger.error("Failed to create audit log", logErr);
       }
 
+      // Update user's storage usage after successful upload
+      if (resolvedUploadedById) {
+        try {
+          await updateUserStorageUsage(resolvedUploadedById);
+        } catch (err) {
+          logger.warn("Failed to update storage usage after text pair upload", {
+            err,
+          });
+        }
+      }
+
       // Socket notification
       try {
         const io = getIo();
@@ -1618,6 +1770,16 @@ router.post(
       const uploadedById = req.user?.userId;
       if (!uploadedById) {
         return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      // Check storage quota before processing (calculate combined size)
+      const combinedSize = (summaryFile?.size || 0) + (realtimeFile?.size || 0);
+      const quotaCheck = await checkStorageQuota(uploadedById, combinedSize);
+      if (!quotaCheck.allowed) {
+        return res.status(413).json({
+          error: "Storage quota exceeded",
+          message: quotaCheck.reason,
+        });
       }
 
       // Get default deleteAfterDays if not provided
@@ -1724,6 +1886,17 @@ router.post(
         });
       } catch (logErr) {
         logger.error("Failed to create audit log", logErr);
+      }
+
+      // Update user's storage usage after successful upload
+      if (resolvedUploadedById) {
+        try {
+          await updateUserStorageUsage(resolvedUploadedById);
+        } catch (err) {
+          logger.warn("Failed to update storage usage after text pair upload", {
+            err,
+          });
+        }
       }
 
       // Socket notification
@@ -1981,6 +2154,1052 @@ router.delete(
     } catch (error) {
       logger.error("Error deleting pair:", error);
       return res.status(500).json({ error: "Failed to delete pair" });
+    }
+  }
+);
+
+// ============================================
+// PHASE 1: PROCESSING RESULTS (AI-Processed Results)
+// ============================================
+
+/**
+ * Helper: Add tags to a processing result via the junction table.
+ * Creates tags if they don't exist, normalizes to lowercase.
+ */
+async function addTagsToResult(
+  resultId: string,
+  tags: string[]
+): Promise<void> {
+  // Normalize tags to lowercase, NFC Unicode form, and dedupe
+  const normalizedTags = [
+    ...new Set(
+      tags.map((t) => t.toLowerCase().trim().normalize("NFC")).filter(Boolean)
+    ),
+  ];
+
+  for (const tagName of normalizedTags) {
+    // Upsert tag
+    const tag = await prisma.tag.upsert({
+      where: { name: tagName },
+      update: {},
+      create: { name: tagName },
+    });
+
+    // Create junction record (ignore if exists)
+    await prisma.processingResultTag.upsert({
+      where: {
+        processingResultId_tagId: {
+          processingResultId: resultId,
+          tagId: tag.id,
+        },
+      },
+      update: {},
+      create: {
+        processingResultId: resultId,
+        tagId: tag.id,
+      },
+    });
+  }
+}
+
+/**
+ * @swagger
+ * /api/files/processing-result:
+ *   post:
+ *     summary: Save a completed AI processing result
+ *     description: Upload/save a processing result with metadata. Used by Android app to persist completed results.
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *               - summary
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 description: Title of the result
+ *               summary:
+ *                 type: string
+ *                 description: Summary text
+ *               transcript:
+ *                 type: string
+ *                 description: Full transcript
+ *               templateId:
+ *                 type: string
+ *                 description: Template ID used for processing
+ *               templateName:
+ *                 type: string
+ *                 description: Template name
+ *               tags:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Tags/keywords
+ *               keyTopics:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Key topics identified
+ *               confidence:
+ *                 type: number
+ *                 description: ASR confidence (0.0-1.0)
+ *               processingTime:
+ *                 type: number
+ *                 description: Processing time in seconds
+ *               audioDuration:
+ *                 type: number
+ *                 description: Audio duration in seconds
+ *               deviceId:
+ *                 type: string
+ *                 description: Device ID if from Android
+ *               deleteAfterDays:
+ *                 type: integer
+ *                 description: Auto-delete after N days
+ *     responses:
+ *       201:
+ *         description: Processing result saved successfully
+ *       400:
+ *         description: Bad request - missing required fields
+ *       401:
+ *         description: Unauthorized
+ */
+router.post(
+  "/processing-result",
+  uploadLimiter,
+  requirePermission(PERMISSIONS.FILES_WRITE),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const {
+        title,
+        summary,
+        transcript,
+        templateId,
+        templateName,
+        tags,
+        keyTopics,
+        confidence,
+        processingTime,
+        audioDuration,
+        deviceId,
+        deleteAfterDays,
+        sourceAudioId,
+      } = req.body as {
+        title?: string;
+        summary?: string;
+        transcript?: string;
+        templateId?: string;
+        templateName?: string;
+        tags?: string[];
+        keyTopics?: string[];
+        confidence?: number;
+        processingTime?: number;
+        audioDuration?: number;
+        deviceId?: string;
+        deleteAfterDays?: number;
+        sourceAudioId?: string;
+      };
+
+      // Validate required fields
+      if (!title || !summary) {
+        return res
+          .status(400)
+          .json({ error: "title and summary are required" });
+      }
+
+      const uploadedById = req.user?.userId;
+      if (!uploadedById) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      // Get default deleteAfterDays if not provided
+      let finalDeleteAfterDays = deleteAfterDays;
+      if (finalDeleteAfterDays === undefined) {
+        const userSettings = await prisma.userSettings.findUnique({
+          where: { userId: uploadedById },
+          select: { defaultDeleteAfterDays: true },
+        });
+        finalDeleteAfterDays =
+          userSettings?.defaultDeleteAfterDays ?? undefined;
+      }
+
+      // Resolve deviceId
+      let resolvedDeviceId: string | null = null;
+      if (deviceId) {
+        const deviceById = await prisma.device
+          .findUnique({ where: { id: String(deviceId) } })
+          .catch(() => null);
+        if (deviceById) {
+          resolvedDeviceId = deviceById.id;
+        } else {
+          const deviceByDeviceId = await prisma.device
+            .findFirst({ where: { deviceId: String(deviceId) } })
+            .catch(() => null);
+          resolvedDeviceId = deviceByDeviceId?.id ?? null;
+        }
+      }
+
+      // Calculate scheduled delete time
+      const scheduledDeleteAt = finalDeleteAfterDays
+        ? new Date(Date.now() + finalDeleteAfterDays * 24 * 60 * 60 * 1000)
+        : null;
+
+      // Encrypt summary and transcript for secure storage
+      const { encryptedData: summaryEncrypted, encryptedIV: summaryIv } =
+        encrypt(Buffer.from(summary));
+      let transcriptEncrypted: Buffer | null = null;
+      let transcriptIv: string | null = null;
+      if (transcript) {
+        const enc = encrypt(Buffer.from(transcript));
+        transcriptEncrypted = enc.encryptedData;
+        transcriptIv = enc.encryptedIV;
+      }
+
+      // Create processing result
+      // Normalize Unicode strings to NFC for consistent search
+      const normalizedTitle = title.normalize("NFC");
+      const normalizedSummary = summary.normalize("NFC");
+      const normalizedTranscript = transcript?.normalize("NFC");
+
+      const result = await prisma.processingResult.create({
+        data: {
+          title: normalizedTitle,
+          templateId,
+          templateName,
+          summaryData: summaryEncrypted,
+          summaryIv,
+          summaryPreview: normalizedSummary.slice(0, 200),
+          summarySize: Buffer.byteLength(normalizedSummary, "utf8"),
+          transcriptData: transcriptEncrypted,
+          transcriptIv,
+          transcriptSize: normalizedTranscript
+            ? Buffer.byteLength(normalizedTranscript, "utf8")
+            : null,
+          confidence,
+          processingTime,
+          audioDuration,
+          status: "completed",
+          uploadedById,
+          deviceId: resolvedDeviceId,
+          sourceAudioId: sourceAudioId || null,
+          processedAt: new Date(),
+          deleteAfterDays: finalDeleteAfterDays,
+          scheduledDeleteAt,
+        },
+      });
+
+      // Add tags via junction table
+      if (tags && Array.isArray(tags) && tags.length > 0) {
+        await addTagsToResult(result.id, tags);
+      }
+
+      // Audit log
+      try {
+        await prisma.auditLog.create({
+          data: {
+            userId: uploadedById,
+            action: "files.processing_result_upload",
+            resource: "processing_result",
+            resourceId: result.id,
+            details: {
+              title,
+              templateId,
+              tagsCount: tags?.length || 0,
+              deviceId: resolvedDeviceId,
+            },
+            ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+            userAgent: req.headers["user-agent"] || "unknown",
+            success: true,
+          },
+        });
+      } catch (logErr) {
+        logger.error("Failed to create audit log", logErr);
+      }
+
+      // Socket notification
+      try {
+        const io = getIo();
+        io.to(userRoom(uploadedById)).emit("files:processing_result_created", {
+          resultId: result.id,
+          title,
+          templateId,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (emitErr) {
+        logger.debug("Socket emit failed", { err: (emitErr as Error).message });
+      }
+
+      logger.info("Processing result saved", {
+        resultId: result.id,
+        title,
+        userId: uploadedById,
+      });
+
+      return res.status(201).json({
+        success: true,
+        result: {
+          id: result.id,
+          title: result.title,
+          templateId: result.templateId,
+          summaryPreview: result.summaryPreview,
+          confidence: result.confidence,
+          processingTime: result.processingTime,
+          audioDuration: result.audioDuration,
+          processedAt: result.processedAt,
+          createdAt: result.createdAt,
+        },
+      });
+    } catch (error) {
+      logger.error("Error saving processing result:", error);
+      return res
+        .status(500)
+        .json({ error: "Failed to save processing result" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/files/results:
+ *   get:
+ *     summary: List processing results
+ *     description: Retrieve a paginated list of AI processing results with optional filters
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, completed, failed, all]
+ *           default: all
+ *         description: Filter by processing status (default shows all)
+ *       - in: query
+ *         name: minConfidence
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *           maximum: 1
+ *         description: Minimum ASR confidence (0.0-1.0)
+ *       - in: query
+ *         name: maxConfidence
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *           maximum: 1
+ *         description: Maximum ASR confidence (0.0-1.0)
+ *       - in: query
+ *         name: tags
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of tags to filter by
+ *       - in: query
+ *         name: templateId
+ *         schema:
+ *           type: string
+ *         description: Filter by template ID
+ *       - in: query
+ *         name: fromDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter results from this date
+ *       - in: query
+ *         name: toDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter results up to this date
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           enum: [date, title, confidence, duration]
+ *           default: date
+ *       - in: query
+ *         name: order
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: desc
+ *     responses:
+ *       200:
+ *         description: List of processing results
+ */
+router.get(
+  "/results",
+  requirePermission(PERMISSIONS.FILES_READ),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const {
+        limit = "50",
+        offset = "0",
+        status,
+        minConfidence,
+        maxConfidence,
+        tags,
+        templateId,
+        fromDate,
+        toDate,
+        sortBy = "date",
+        order = "desc",
+      } = req.query as {
+        limit?: string;
+        offset?: string;
+        status?: string;
+        minConfidence?: string;
+        maxConfidence?: string;
+        tags?: string;
+        templateId?: string;
+        fromDate?: string;
+        toDate?: string;
+        sortBy?: string;
+        order?: string;
+      };
+
+      const isAdmin = req.user?.roleName === "admin";
+      const take = Math.min(parseInt(limit) || 50, 100);
+      const skip = parseInt(offset) || 0;
+
+      // Build where clause
+      const where: any = {};
+
+      // User isolation (non-admin users only see their own results)
+      if (!isAdmin && req.user?.userId) {
+        where.uploadedById = req.user.userId;
+      }
+
+      // Status filter (if provided and not 'all')
+      if (status && status !== "all") {
+        where.status = status;
+      }
+
+      // Confidence range filter
+      const minConf = minConfidence ? parseFloat(minConfidence) : undefined;
+      const maxConf = maxConfidence ? parseFloat(maxConfidence) : undefined;
+      if (minConf !== undefined || maxConf !== undefined) {
+        where.confidence = {};
+        if (minConf !== undefined && !isNaN(minConf)) {
+          where.confidence.gte = minConf;
+        }
+        if (maxConf !== undefined && !isNaN(maxConf)) {
+          where.confidence.lte = maxConf;
+        }
+      }
+
+      // Template filter
+      if (templateId) {
+        where.templateId = templateId;
+      }
+
+      // Date range filter
+      if (fromDate || toDate) {
+        where.processedAt = {};
+        if (fromDate) {
+          where.processedAt.gte = new Date(fromDate);
+        }
+        if (toDate) {
+          // Add one day to include the entire toDate
+          const endDate = new Date(toDate);
+          endDate.setDate(endDate.getDate() + 1);
+          where.processedAt.lt = endDate;
+        }
+      }
+
+      // Tags filter (must have all specified tags)
+      if (tags) {
+        const tagList = tags
+          .split(",")
+          .map((t) => t.trim().normalize("NFC").toLowerCase())
+          .filter(Boolean);
+        if (tagList.length > 0) {
+          where.tags = {
+            some: {
+              tag: {
+                name: { in: tagList },
+              },
+            },
+          };
+        }
+      }
+
+      // Build sort order
+      let orderBy: any = { processedAt: order === "asc" ? "asc" : "desc" };
+      switch (sortBy) {
+        case "title":
+          orderBy = { title: order === "asc" ? "asc" : "desc" };
+          break;
+        case "confidence":
+          orderBy = { confidence: order === "asc" ? "asc" : "desc" };
+          break;
+        case "duration":
+          orderBy = { audioDuration: order === "asc" ? "asc" : "desc" };
+          break;
+        case "date":
+        default:
+          orderBy = { processedAt: order === "asc" ? "asc" : "desc" };
+          break;
+      }
+
+      const [results, total] = await Promise.all([
+        prisma.processingResult.findMany({
+          where,
+          include: {
+            tags: {
+              include: { tag: true },
+            },
+            uploadedBy: {
+              select: { id: true, username: true, fullName: true },
+            },
+          },
+          orderBy,
+          take,
+          skip,
+        }),
+        prisma.processingResult.count({ where }),
+      ]);
+
+      return res.json({
+        success: true,
+        results: results.map((r) => ({
+          id: r.id,
+          title: r.title,
+          templateId: r.templateId,
+          templateName: r.templateName,
+          summaryPreview: r.summaryPreview,
+          tags: r.tags.map((t) => t.tag.name),
+          confidence: r.confidence,
+          processingTime: r.processingTime,
+          audioDuration: r.audioDuration,
+          status: r.status,
+          uploadedBy: r.uploadedBy,
+          processedAt: r.processedAt,
+          createdAt: r.createdAt,
+        })),
+        pagination: {
+          total,
+          limit: take,
+          offset: skip,
+          hasMore: skip + take < total,
+        },
+      });
+    } catch (error) {
+      logger.error("Error fetching processing results:", error);
+      return res
+        .status(500)
+        .json({ error: "Failed to fetch processing results" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/files/results/{id}:
+ *   get:
+ *     summary: Get a processing result by ID with decrypted content
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+  "/results/:id",
+  requirePermission(PERMISSIONS.FILES_READ),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const { id } = req.params;
+      const isAdmin = req.user?.roleName === "admin";
+
+      const result = await prisma.processingResult.findUnique({
+        where: { id },
+        include: {
+          tags: {
+            include: { tag: true },
+          },
+          uploadedBy: {
+            select: { id: true, username: true, fullName: true },
+          },
+        },
+      });
+
+      if (!result) {
+        return res.status(404).json({ error: "Processing result not found" });
+      }
+
+      // Check access permission
+      if (!isAdmin && result.uploadedById !== req.user?.userId) {
+        return res
+          .status(403)
+          .json({ error: "Forbidden: You do not have access to this result" });
+      }
+
+      // Decrypt content
+      let summary: string | null = null;
+      let transcript: string | null = null;
+
+      if (result.summaryData && result.summaryIv) {
+        try {
+          summary = decrypt(
+            Buffer.from(result.summaryData),
+            result.summaryIv
+          ).toString("utf8");
+        } catch (decErr) {
+          logger.error("Failed to decrypt summary", { id, error: decErr });
+        }
+      }
+
+      if (result.transcriptData && result.transcriptIv) {
+        try {
+          transcript = decrypt(
+            Buffer.from(result.transcriptData),
+            result.transcriptIv
+          ).toString("utf8");
+        } catch (decErr) {
+          logger.error("Failed to decrypt transcript", { id, error: decErr });
+        }
+      }
+
+      return res.json({
+        success: true,
+        result: {
+          id: result.id,
+          title: result.title,
+          templateId: result.templateId,
+          templateName: result.templateName,
+          summary,
+          transcript,
+          tags: result.tags.map((t) => t.tag.name),
+          confidence: result.confidence,
+          processingTime: result.processingTime,
+          audioDuration: result.audioDuration,
+          status: result.status,
+          uploadedBy: result.uploadedBy,
+          processedAt: result.processedAt,
+          createdAt: result.createdAt,
+        },
+      });
+    } catch (error) {
+      logger.error("Error fetching processing result:", error);
+      return res
+        .status(500)
+        .json({ error: "Failed to fetch processing result" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/files/results/{id}:
+ *   delete:
+ *     summary: Delete a processing result
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.delete(
+  "/results/:id",
+  requirePermission(PERMISSIONS.FILES_DELETE),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const { id } = req.params;
+      const isAdmin = req.user?.roleName === "admin";
+
+      const result = await prisma.processingResult.findUnique({
+        where: { id },
+      });
+
+      if (!result) {
+        return res.status(404).json({ error: "Processing result not found" });
+      }
+
+      // Check ownership
+      if (!isAdmin && result.uploadedById !== req.user?.userId) {
+        return res
+          .status(403)
+          .json({ error: "Forbidden: You cannot delete this result" });
+      }
+
+      // Delete (cascade will handle junction table)
+      await prisma.processingResult.delete({ where: { id } });
+
+      // Audit log
+      try {
+        await prisma.auditLog.create({
+          data: {
+            userId: req.user?.userId,
+            action: "files.processing_result_delete",
+            resource: "processing_result",
+            resourceId: id,
+            details: { title: result.title },
+            ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+            userAgent: req.headers["user-agent"] || "unknown",
+            success: true,
+          },
+        });
+      } catch (logErr) {
+        logger.error("Failed to create audit log", logErr);
+      }
+
+      return res.json({ success: true, message: "Processing result deleted" });
+    } catch (error) {
+      logger.error("Error deleting processing result:", error);
+      return res
+        .status(500)
+        .json({ error: "Failed to delete processing result" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/files/search:
+ *   get:
+ *     summary: Search processing results
+ *     description: Search processing results by title, tags, template, date range, confidence, and status
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: q
+ *         schema:
+ *           type: string
+ *         description: Search query for title
+ *       - in: query
+ *         name: tags
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of tags to filter by
+ *       - in: query
+ *         name: templateId
+ *         schema:
+ *           type: string
+ *         description: Filter by template ID
+ *       - in: query
+ *         name: fromDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter results from this date
+ *       - in: query
+ *         name: toDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter results up to this date
+ *       - in: query
+ *         name: minConfidence
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *           maximum: 1
+ *         description: Minimum ASR confidence (0.0-1.0)
+ *       - in: query
+ *         name: maxConfidence
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *           maximum: 1
+ *         description: Maximum ASR confidence (0.0-1.0)
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, completed, failed, all]
+ *           default: completed
+ *         description: Filter by processing status (default shows only completed)
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           enum: [date, title, confidence, duration]
+ *           default: date
+ *       - in: query
+ *         name: order
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: desc
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *     responses:
+ *       200:
+ *         description: Search results
+ */
+router.get(
+  "/search",
+  requirePermission(PERMISSIONS.FILES_READ),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const userId = req.user?.userId;
+      const isAdmin = req.user?.roleName === "admin";
+
+      const {
+        q,
+        tags,
+        templateId,
+        fromDate,
+        toDate,
+        minConfidence,
+        maxConfidence,
+        status = "completed",
+        sortBy = "date",
+        order = "desc",
+        limit = "20",
+        offset = "0",
+      } = req.query as {
+        q?: string;
+        tags?: string;
+        templateId?: string;
+        fromDate?: string;
+        toDate?: string;
+        minConfidence?: string;
+        maxConfidence?: string;
+        status?: string;
+        sortBy?: string;
+        order?: string;
+        limit?: string;
+        offset?: string;
+      };
+
+      const take = Math.min(parseInt(limit) || 20, 100);
+      const skip = parseInt(offset) || 0;
+
+      // Build where clause
+      const where: any = {};
+
+      // Status filter (default to completed, 'all' shows all statuses)
+      if (status && status !== "all") {
+        where.status = status;
+      }
+
+      // Ownership filter (admin sees all)
+      if (!isAdmin && userId) {
+        where.uploadedById = userId;
+      }
+
+      // Text search on title (case-insensitive with SQLite)
+      // Normalize to NFC Unicode form for consistent matching
+      if (q && q.trim()) {
+        where.title = { contains: q.trim().normalize("NFC") };
+      }
+
+      // Tag filter (using junction table)
+      // Normalize to NFC Unicode form to match stored tags
+      if (tags) {
+        const tagList = tags
+          .split(",")
+          .map((t) => t.trim().toLowerCase().normalize("NFC"))
+          .filter(Boolean);
+        if (tagList.length > 0) {
+          where.tags = {
+            some: {
+              tag: { name: { in: tagList } },
+            },
+          };
+        }
+      }
+
+      // Template filter
+      if (templateId) {
+        where.templateId = templateId;
+      }
+
+      // Date range
+      if (fromDate || toDate) {
+        where.processedAt = {};
+        if (fromDate) where.processedAt.gte = new Date(fromDate);
+        if (toDate) {
+          // Include the entire "toDate" day
+          const endDate = new Date(toDate);
+          endDate.setHours(23, 59, 59, 999);
+          where.processedAt.lte = endDate;
+        }
+      }
+
+      // Confidence range filter
+      if (minConfidence || maxConfidence) {
+        where.confidence = {};
+        if (minConfidence) {
+          const minConf = parseFloat(minConfidence);
+          if (!isNaN(minConf) && minConf >= 0 && minConf <= 1) {
+            where.confidence.gte = minConf;
+          }
+        }
+        if (maxConfidence) {
+          const maxConf = parseFloat(maxConfidence);
+          if (!isNaN(maxConf) && maxConf >= 0 && maxConf <= 1) {
+            where.confidence.lte = maxConf;
+          }
+        }
+        // Remove empty confidence object if no valid filters
+        if (Object.keys(where.confidence).length === 0) {
+          delete where.confidence;
+        }
+      }
+
+      // Build orderBy
+      const orderDirection = order === "asc" ? "asc" : "desc";
+      let orderBy: any;
+      switch (sortBy) {
+        case "title":
+          orderBy = { title: orderDirection };
+          break;
+        case "confidence":
+          orderBy = { confidence: orderDirection };
+          break;
+        case "duration":
+          orderBy = { audioDuration: orderDirection };
+          break;
+        case "date":
+        default:
+          orderBy = { processedAt: orderDirection };
+          break;
+      }
+
+      const [results, total] = await Promise.all([
+        prisma.processingResult.findMany({
+          where,
+          include: {
+            tags: { include: { tag: true } },
+            uploadedBy: {
+              select: { id: true, username: true, fullName: true },
+            },
+          },
+          orderBy,
+          take,
+          skip,
+        }),
+        prisma.processingResult.count({ where }),
+      ]);
+
+      return res.json({
+        success: true,
+        results: results.map((r) => ({
+          id: r.id,
+          title: r.title,
+          templateId: r.templateId,
+          templateName: r.templateName,
+          summaryPreview: r.summaryPreview,
+          tags: r.tags.map((t) => t.tag.name),
+          confidence: r.confidence,
+          processingTime: r.processingTime,
+          audioDuration: r.audioDuration,
+          status: r.status,
+          uploadedBy: r.uploadedBy,
+          processedAt: r.processedAt,
+          createdAt: r.createdAt,
+        })),
+        pagination: {
+          total,
+          limit: take,
+          offset: skip,
+          hasMore: skip + results.length < total,
+        },
+      });
+    } catch (error) {
+      logger.error("Search failed", { error });
+      return res.status(500).json({ error: "Search failed" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/files/tags:
+ *   get:
+ *     summary: Get popular tags for filtering/autocomplete
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *       - in: query
+ *         name: q
+ *         schema:
+ *           type: string
+ *         description: Filter tags by name prefix (for autocomplete)
+ *     responses:
+ *       200:
+ *         description: List of tags with usage counts
+ */
+router.get(
+  "/tags",
+  requirePermission(PERMISSIONS.FILES_READ),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const userId = req.user?.userId;
+      const isAdmin = req.user?.roleName === "admin";
+      const { limit = "50", q } = req.query as { limit?: string; q?: string };
+      const take = Math.min(parseInt(limit) || 50, 100);
+
+      // Build filter for tags
+      const tagWhere: any = {};
+      if (q && q.trim()) {
+        tagWhere.name = { startsWith: q.trim().toLowerCase() };
+      }
+
+      // For non-admin, only show tags from results they own
+      if (!isAdmin && userId) {
+        tagWhere.results = {
+          some: {
+            processingResult: {
+              uploadedById: userId,
+            },
+          },
+        };
+      }
+
+      const tags = await prisma.tag.findMany({
+        where: tagWhere,
+        include: {
+          _count: {
+            select: { results: true },
+          },
+        },
+        orderBy: {
+          results: { _count: "desc" },
+        },
+        take,
+      });
+
+      return res.json({
+        success: true,
+        tags: tags.map((t) => ({
+          name: t.name,
+          count: t._count.results,
+        })),
+      });
+    } catch (error) {
+      logger.error("Failed to fetch tags", { error });
+      return res.status(500).json({ error: "Failed to fetch tags" });
     }
   }
 );

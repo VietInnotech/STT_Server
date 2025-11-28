@@ -37,7 +37,8 @@ const DEFAULT_SETTINGS = {
 
   // UI Preferences
   theme: "light",
-  language: "en",
+  // Default language for new users/system wide is Vietnamese (vi)
+  language: "vi",
   dateFormat: "YYYY-MM-DD",
   timeFormat: "24h",
   itemsPerPage: 50,
@@ -80,7 +81,7 @@ const DEFAULT_SETTINGS = {
  *                   additionalProperties: true
  *                   example:
  *                     theme: "dark"
- *                     language: "en"
+ *                     language: "vi"
  *                     notifications: true
  *       401:
  *         description: Unauthorized

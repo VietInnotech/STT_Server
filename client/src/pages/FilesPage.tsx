@@ -21,6 +21,7 @@ import Modal from "../components/Modal";
 import FormLabel from "../components/FormLabel";
 import { usePermission } from "../hooks/usePermission";
 import { PERMISSIONS } from "../lib/permissions";
+import ProcessingResultsTab from "../components/ProcessingResultsTab";
 
 interface CombinedFile extends FileItem {
   type: "audio" | "text";
@@ -37,6 +38,10 @@ export default function FilesPage() {
   const { can } = usePermission();
   const canWrite = can(PERMISSIONS.FILES_WRITE);
   const canDelete = can(PERMISSIONS.FILES_DELETE);
+
+  // Tab state: 'files' or 'results'
+  const [activeTab, setActiveTab] = useState<"files" | "results">("files");
+
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
   const [files, setFiles] = useState<CombinedFile[]>([]);
@@ -836,389 +841,435 @@ export default function FilesPage() {
         ) : null}
       </Modal>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-        <input
-          type="text"
-          placeholder={t("searchFiles")}
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+      {/* Tab Navigation */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+          <button
+            onClick={() => setActiveTab("files")}
+            className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+              activeTab === "files"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+          >
+            {t("tabs.files")}
+          </button>
+          <button
+            onClick={() => setActiveTab("results")}
+            className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+              activeTab === "results"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+          >
+            {t("tabs.results")}
+          </button>
+        </nav>
       </div>
 
-      {/* Files Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+      {/* Files Tab Content */}
+      {activeTab === "files" && (
+        <>
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+            <input
+              type="text"
+              placeholder={t("searchFiles")}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
-        ) : filteredFiles.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">
-            {t("noFilesFound")}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("file")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("size")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("uploadedBy")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("deleteAfter")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("uploaded")}
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("actions")}
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {paginatedFiles.map((file: CombinedFile) => (
-                  <tr
-                    key={file.id}
-                    className="hover:bg-gray-50"
-                    onDoubleClick={async () => {
-                      try {
-                        if ((file as any).isPair) {
-                          // Fetch both files and open split view
-                          setPairViewer(file);
-                          setPairViewerLoading(true);
-                          setPairViewerContent(null);
-                          const summaryId = (file as any).summaryFileId;
-                          const realtimeId = (file as any).realtimeFileId;
-                          const [summaryResp, realtimeResp] = await Promise.all(
-                            [
-                              filesApi.getText(summaryId),
-                              filesApi.getText(realtimeId),
-                            ]
-                          );
-                          let sumText = "";
-                          let realText = "";
+
+          {/* Files Table */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+              </div>
+            ) : filteredFiles.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                {t("noFilesFound")}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        {t("file")}
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        {t("size")}
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        {t("uploadedBy")}
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        {t("deleteAfter")}
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        {t("uploaded")}
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        {t("actions")}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {paginatedFiles.map((file: CombinedFile) => (
+                      <tr
+                        key={file.id}
+                        className="hover:bg-gray-50"
+                        onDoubleClick={async () => {
                           try {
-                            sumText = await summaryResp.data.text();
-                          } catch {
-                            const url = URL.createObjectURL(
-                              summaryResp.data as Blob
-                            );
-                            sumText = await fetch(url)
-                              .then((r) => r.text())
-                              .finally(() => URL.revokeObjectURL(url));
-                          }
-                          try {
-                            realText = await realtimeResp.data.text();
-                          } catch {
-                            const url2 = URL.createObjectURL(
-                              realtimeResp.data as Blob
-                            );
-                            realText = await fetch(url2)
-                              .then((r) => r.text())
-                              .finally(() => URL.revokeObjectURL(url2));
-                          }
-                          setPairViewerContent({
-                            summary: sumText,
-                            realtime: realText,
-                          });
-                          setPairViewerLoading(false);
-                        } else {
-                          // Single file view (text or audio)
-                          setFileViewer(file);
-                          setFileViewerContent(null);
-                          if (file.type === "audio") {
-                            const resp = await filesApi.getAudio(file.id);
-                            // resp.data is a Blob. Ensure it has the right MIME type from headers.
-                            let blob = resp.data as Blob;
-                            try {
-                              const contentType =
-                                (resp as any).headers?.["content-type"] || "";
-                              if (contentType && blob.type !== contentType) {
-                                // Wrap blob in new Blob with explicit content type preserved
-                                blob = new Blob([blob], { type: contentType });
+                            if ((file as any).isPair) {
+                              // Fetch both files and open split view
+                              setPairViewer(file);
+                              setPairViewerLoading(true);
+                              setPairViewerContent(null);
+                              const summaryId = (file as any).summaryFileId;
+                              const realtimeId = (file as any).realtimeFileId;
+                              const [summaryResp, realtimeResp] =
+                                await Promise.all([
+                                  filesApi.getText(summaryId),
+                                  filesApi.getText(realtimeId),
+                                ]);
+                              let sumText = "";
+                              let realText = "";
+                              try {
+                                sumText = await summaryResp.data.text();
+                              } catch {
+                                const url = URL.createObjectURL(
+                                  summaryResp.data as Blob
+                                );
+                                sumText = await fetch(url)
+                                  .then((r) => r.text())
+                                  .finally(() => URL.revokeObjectURL(url));
                               }
-                            } catch (err) {
-                              // ignore and fallback to blob as-is
-                            }
-                            const url = URL.createObjectURL(blob);
-                            setFileViewerContent({ audioUrl: url });
-                          } else {
-                            const resp = await filesApi.getText(file.id);
-                            let text = "";
-                            try {
-                              text = await resp.data.text();
-                            } catch {
-                              const url = URL.createObjectURL(
-                                resp.data as Blob
-                              );
-                              text = await fetch(url)
-                                .then((r) => r.text())
-                                .finally(() => URL.revokeObjectURL(url));
-                            }
-                            setFileViewerContent({ text });
-                          }
-                        }
-                      } catch (err: any) {
-                        console.error("Failed to open viewer", err);
-                        const status = err?.response?.status;
-                        if (status === 429) {
-                          toast.error(t("tooManyRequests"));
-                        } else {
-                          toast.error(t("failedToOpenViewer"));
-                        }
-                        setPairViewer(null);
-                        setPairViewerLoading(false);
-                        setFileViewer(null);
-                      }
-                    }}
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        {file.type === "audio" ? (
-                          <FileAudio className="h-5 w-5 text-blue-500" />
-                        ) : (
-                          <FileText className="h-5 w-5 text-gray-500" />
-                        )}
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-900">
-                            {file.filename}
-                          </span>
-                          {/* Owner share indicator moved here */}
-                          {(file as any)._ownerShares &&
-                            (file as any)._ownerShares.length > 0 && (
-                              <div>
-                                <button
-                                  onClick={() => setOwnerSharesModalFile(file)}
-                                  className="text-xs text-white bg-indigo-600 px-2 py-1 rounded"
-                                  title={t("sharedWith", {
-                                    count: (file as any)._ownerShares.length,
-                                  })}
-                                >
-                                  {t("sharedWith", {
-                                    count: (file as any)._ownerShares.length,
-                                  })}
-                                </button>
-                              </div>
-                            )}
-                          {/* Recipient shared indicator: if this file is shared with the current user */}
-                          {(file as any)._share && (
-                            <span
-                              title={`Shared by ${
-                                (file as any)._share.sharedByName ||
-                                usersMap[(file as any)._share.sharedById] ||
-                                (file as any)._share.sharedById ||
-                                t("unknown")
-                              }`}
-                              className="ml-2 text-xs text-white bg-green-600 px-2 py-1 rounded"
-                            >
-                              {t("shared")}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatBytes(file.fileSize)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {file.uploadedBy ? (
-                        <span className="text-gray-900 font-medium">
-                          {file.uploadedBy.fullName || file.uploadedBy.username}
-                        </span>
-                      ) : (
-                        t("na")
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {/* Show auto-delete days or share expiry if present */}
-                      {(() => {
-                        const auto = (file as any).deleteAfterDays;
-                        const share = (file as any)._share;
-                        if (share && share.expiresAt) {
-                          const expires = new Date(share.expiresAt);
-                          const diffDays = Math.ceil(
-                            (expires.getTime() - Date.now()) /
-                              (24 * 60 * 60 * 1000)
-                          );
-                          return (
-                            <span className="text-sm text-gray-700">
-                              {t("days", { count: diffDays })}
-                            </span>
-                          );
-                        }
-                        if (auto) {
-                          return (
-                            <span className="text-sm text-gray-700">
-                              {t("days", { count: auto })}
-                            </span>
-                          );
-                        }
-                        // If file has no per-file delete setting, show user's/settings auto-delete if available
-                        if (
-                          settingsAutoDeleteDays !== undefined &&
-                          settingsAutoDeleteDays !== null
-                        ) {
-                          return (
-                            <span className="text-sm text-gray-700">
-                              {t("days", { count: settingsAutoDeleteDays })}
-                            </span>
-                          );
-                        }
-                        return (
-                          <span className="text-sm text-gray-400">
-                            {t("none")}
-                          </span>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatDate(file.uploadedAt)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => handleDownload(file)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                        >
-                          <Download className="h-4 w-4" />
-                        </button>
-                        {canDelete && (
-                          <button
-                            onClick={() => handleDelete(file)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                        {/* If pair row or text file from android, show Compare action */}
-                        {(file as any).isPair ||
-                          (file.type === "text" &&
-                            (file as any).origin === "android" &&
-                            ((file as any).androidSummary ||
-                              (file as any).androidRealtime) && (
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    // If it's a pair, open split view
-                                    if ((file as any).isPair) {
-                                      setPairViewer(file);
-                                      setPairViewerLoading(true);
-                                      setPairViewerContent(null);
-                                      const summaryId = (file as any)
-                                        .summaryFileId;
-                                      const realtimeId = (file as any)
-                                        .realtimeFileId;
-                                      const [summaryResp, realtimeResp] =
-                                        await Promise.all([
-                                          filesApi.getText(summaryId),
-                                          filesApi.getText(realtimeId),
-                                        ]);
-                                      let sumText = "";
-                                      let realText = "";
-                                      try {
-                                        sumText = await summaryResp.data.text();
-                                      } catch {
-                                        const url = URL.createObjectURL(
-                                          summaryResp.data as Blob
-                                        );
-                                        sumText = await fetch(url)
-                                          .then((r) => r.text())
-                                          .finally(() =>
-                                            URL.revokeObjectURL(url)
-                                          );
-                                      }
-                                      try {
-                                        realText =
-                                          await realtimeResp.data.text();
-                                      } catch {
-                                        const url2 = URL.createObjectURL(
-                                          realtimeResp.data as Blob
-                                        );
-                                        realText = await fetch(url2)
-                                          .then((r) => r.text())
-                                          .finally(() =>
-                                            URL.revokeObjectURL(url2)
-                                          );
-                                      }
-                                      setPairViewerContent({
-                                        summary: sumText,
-                                        realtime: realText,
-                                      });
-                                      setPairViewerLoading(false);
-                                      return;
-                                    }
-                                    setCompareLoading(true);
-                                    setCompareFile(file);
-                                    setCompareTextContent(null);
-                                    // fetch decrypted text content
-                                    const resp = await filesApi.getText(
-                                      file.id
-                                    );
-                                    // resp.data is a Blob
-                                    let text = "";
-                                    try {
-                                      text = await resp.data.text();
-                                    } catch (err) {
-                                      // fallback: create object URL and fetch
-                                      const url = window.URL.createObjectURL(
-                                        new Blob([resp.data])
-                                      );
-                                      text = await fetch(url)
-                                        .then((r) => r.text())
-                                        .finally(() =>
-                                          window.URL.revokeObjectURL(url)
-                                        );
-                                    }
-                                    setCompareTextContent(text);
-                                    setCompareLoading(false);
-                                    // open modal
-                                    setCompareFile(file);
-                                  } catch (err: any) {
-                                    console.error(
-                                      "Failed to fetch text for compare",
-                                      err
-                                    );
-                                    if (err?.response?.status === 429) {
-                                      toast.error(t("tooManyRequests"));
-                                    } else {
-                                      toast.error(
-                                        t("failedToFetchTextForCompare")
-                                      );
-                                    }
-                                    setCompareLoading(false);
-                                    setCompareFile(null);
+                              try {
+                                realText = await realtimeResp.data.text();
+                              } catch {
+                                const url2 = URL.createObjectURL(
+                                  realtimeResp.data as Blob
+                                );
+                                realText = await fetch(url2)
+                                  .then((r) => r.text())
+                                  .finally(() => URL.revokeObjectURL(url2));
+                              }
+                              setPairViewerContent({
+                                summary: sumText,
+                                realtime: realText,
+                              });
+                              setPairViewerLoading(false);
+                            } else {
+                              // Single file view (text or audio)
+                              setFileViewer(file);
+                              setFileViewerContent(null);
+                              if (file.type === "audio") {
+                                const resp = await filesApi.getAudio(file.id);
+                                // resp.data is a Blob. Ensure it has the right MIME type from headers.
+                                let blob = resp.data as Blob;
+                                try {
+                                  const contentType =
+                                    (resp as any).headers?.["content-type"] ||
+                                    "";
+                                  if (
+                                    contentType &&
+                                    blob.type !== contentType
+                                  ) {
+                                    // Wrap blob in new Blob with explicit content type preserved
+                                    blob = new Blob([blob], {
+                                      type: contentType,
+                                    });
                                   }
-                                }}
-                                className="px-3 py-2 text-sm bg-yellow-50 text-yellow-700 rounded"
+                                } catch (err) {
+                                  // ignore and fallback to blob as-is
+                                }
+                                const url = URL.createObjectURL(blob);
+                                setFileViewerContent({ audioUrl: url });
+                              } else {
+                                const resp = await filesApi.getText(file.id);
+                                let text = "";
+                                try {
+                                  text = await resp.data.text();
+                                } catch {
+                                  const url = URL.createObjectURL(
+                                    resp.data as Blob
+                                  );
+                                  text = await fetch(url)
+                                    .then((r) => r.text())
+                                    .finally(() => URL.revokeObjectURL(url));
+                                }
+                                setFileViewerContent({ text });
+                              }
+                            }
+                          } catch (err: any) {
+                            console.error("Failed to open viewer", err);
+                            const status = err?.response?.status;
+                            if (status === 429) {
+                              toast.error(t("tooManyRequests"));
+                            } else {
+                              toast.error(t("failedToOpenViewer"));
+                            }
+                            setPairViewer(null);
+                            setPairViewerLoading(false);
+                            setFileViewer(null);
+                          }
+                        }}
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center gap-3">
+                            {file.type === "audio" ? (
+                              <FileAudio className="h-5 w-5 text-blue-500" />
+                            ) : (
+                              <FileText className="h-5 w-5 text-gray-500" />
+                            )}
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900">
+                                {file.filename}
+                              </span>
+                              {/* Owner share indicator moved here */}
+                              {(file as any)._ownerShares &&
+                                (file as any)._ownerShares.length > 0 && (
+                                  <div>
+                                    <button
+                                      onClick={() =>
+                                        setOwnerSharesModalFile(file)
+                                      }
+                                      className="text-xs text-white bg-indigo-600 px-2 py-1 rounded"
+                                      title={t("sharedWith", {
+                                        count: (file as any)._ownerShares
+                                          .length,
+                                      })}
+                                    >
+                                      {t("sharedWith", {
+                                        count: (file as any)._ownerShares
+                                          .length,
+                                      })}
+                                    </button>
+                                  </div>
+                                )}
+                              {/* Recipient shared indicator: if this file is shared with the current user */}
+                              {(file as any)._share && (
+                                <span
+                                  title={`Shared by ${
+                                    (file as any)._share.sharedByName ||
+                                    usersMap[(file as any)._share.sharedById] ||
+                                    (file as any)._share.sharedById ||
+                                    t("unknown")
+                                  }`}
+                                  className="ml-2 text-xs text-white bg-green-600 px-2 py-1 rounded"
+                                >
+                                  {t("shared")}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {formatBytes(file.fileSize)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {file.uploadedBy ? (
+                            <span className="text-gray-900 font-medium">
+                              {file.uploadedBy.fullName ||
+                                file.uploadedBy.username}
+                            </span>
+                          ) : (
+                            t("na")
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {/* Show auto-delete days or share expiry if present */}
+                          {(() => {
+                            const auto = (file as any).deleteAfterDays;
+                            const share = (file as any)._share;
+                            if (share && share.expiresAt) {
+                              const expires = new Date(share.expiresAt);
+                              const diffDays = Math.ceil(
+                                (expires.getTime() - Date.now()) /
+                                  (24 * 60 * 60 * 1000)
+                              );
+                              return (
+                                <span className="text-sm text-gray-700">
+                                  {t("days", { count: diffDays })}
+                                </span>
+                              );
+                            }
+                            if (auto) {
+                              return (
+                                <span className="text-sm text-gray-700">
+                                  {t("days", { count: auto })}
+                                </span>
+                              );
+                            }
+                            // If file has no per-file delete setting, show user's/settings auto-delete if available
+                            if (
+                              settingsAutoDeleteDays !== undefined &&
+                              settingsAutoDeleteDays !== null
+                            ) {
+                              return (
+                                <span className="text-sm text-gray-700">
+                                  {t("days", { count: settingsAutoDeleteDays })}
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="text-sm text-gray-400">
+                                {t("none")}
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {formatDate(file.uploadedAt)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleDownload(file)}
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            >
+                              <Download className="h-4 w-4" />
+                            </button>
+                            {canDelete && (
+                              <button
+                                onClick={() => handleDelete(file)}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                               >
-                                {t("compare")}
+                                <Trash2 className="h-4 w-4" />
                               </button>
-                            ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                            )}
+                            {/* If pair row or text file from android, show Compare action */}
+                            {(file as any).isPair ||
+                              (file.type === "text" &&
+                                (file as any).origin === "android" &&
+                                ((file as any).androidSummary ||
+                                  (file as any).androidRealtime) && (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        // If it's a pair, open split view
+                                        if ((file as any).isPair) {
+                                          setPairViewer(file);
+                                          setPairViewerLoading(true);
+                                          setPairViewerContent(null);
+                                          const summaryId = (file as any)
+                                            .summaryFileId;
+                                          const realtimeId = (file as any)
+                                            .realtimeFileId;
+                                          const [summaryResp, realtimeResp] =
+                                            await Promise.all([
+                                              filesApi.getText(summaryId),
+                                              filesApi.getText(realtimeId),
+                                            ]);
+                                          let sumText = "";
+                                          let realText = "";
+                                          try {
+                                            sumText =
+                                              await summaryResp.data.text();
+                                          } catch {
+                                            const url = URL.createObjectURL(
+                                              summaryResp.data as Blob
+                                            );
+                                            sumText = await fetch(url)
+                                              .then((r) => r.text())
+                                              .finally(() =>
+                                                URL.revokeObjectURL(url)
+                                              );
+                                          }
+                                          try {
+                                            realText =
+                                              await realtimeResp.data.text();
+                                          } catch {
+                                            const url2 = URL.createObjectURL(
+                                              realtimeResp.data as Blob
+                                            );
+                                            realText = await fetch(url2)
+                                              .then((r) => r.text())
+                                              .finally(() =>
+                                                URL.revokeObjectURL(url2)
+                                              );
+                                          }
+                                          setPairViewerContent({
+                                            summary: sumText,
+                                            realtime: realText,
+                                          });
+                                          setPairViewerLoading(false);
+                                          return;
+                                        }
+                                        setCompareLoading(true);
+                                        setCompareFile(file);
+                                        setCompareTextContent(null);
+                                        // fetch decrypted text content
+                                        const resp = await filesApi.getText(
+                                          file.id
+                                        );
+                                        // resp.data is a Blob
+                                        let text = "";
+                                        try {
+                                          text = await resp.data.text();
+                                        } catch (err) {
+                                          // fallback: create object URL and fetch
+                                          const url =
+                                            window.URL.createObjectURL(
+                                              new Blob([resp.data])
+                                            );
+                                          text = await fetch(url)
+                                            .then((r) => r.text())
+                                            .finally(() =>
+                                              window.URL.revokeObjectURL(url)
+                                            );
+                                        }
+                                        setCompareTextContent(text);
+                                        setCompareLoading(false);
+                                        // open modal
+                                        setCompareFile(file);
+                                      } catch (err: any) {
+                                        console.error(
+                                          "Failed to fetch text for compare",
+                                          err
+                                        );
+                                        if (err?.response?.status === 429) {
+                                          toast.error(t("tooManyRequests"));
+                                        } else {
+                                          toast.error(
+                                            t("failedToFetchTextForCompare")
+                                          );
+                                        }
+                                        setCompareLoading(false);
+                                        setCompareFile(null);
+                                      }
+                                    }}
+                                    className="px-3 py-2 text-sm bg-yellow-50 text-yellow-700 rounded"
+                                  >
+                                    {t("compare")}
+                                  </button>
+                                ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {!loading && filteredFiles.length > 0 && (
+              <Pagination
+                currentPage={currentPage}
+                totalItems={totalItems}
+                itemsPerPage={itemsPerPage}
+                onPageChange={setCurrentPage}
+              />
+            )}
           </div>
-        )}
-        {!loading && filteredFiles.length > 0 && (
-          <Pagination
-            currentPage={currentPage}
-            totalItems={totalItems}
-            itemsPerPage={itemsPerPage}
-            onPageChange={setCurrentPage}
-          />
-        )}
-      </div>
+        </>
+      )}
+
+      {/* AI Processing Results Tab Content */}
+      {activeTab === "results" && <ProcessingResultsTab />}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { settingsApi } from "../lib/api";
+import i18n from "../i18n";
 
 export type TimeFormat = "12h" | "24h";
 export type DateFormat =
@@ -34,7 +35,7 @@ export const useSettingsStore = create<SettingsState>()(
       dateFormat: "YYYY-MM-DD",
       timeFormat: "24h",
       itemsPerPage: 50,
-      language: "en",
+      language: "vi",
 
       setDateFormat: (dateFormat) => {
         set({ dateFormat });
@@ -64,8 +65,17 @@ export const useSettingsStore = create<SettingsState>()(
             dateFormat: (s.dateFormat as DateFormat) || "YYYY-MM-DD",
             timeFormat: (s.timeFormat as TimeFormat) || "24h",
             itemsPerPage: s.itemsPerPage || 50,
-            language: s.language || "en",
+            language: s.language || "vi",
           });
+          // sync i18n language with server preference
+          try {
+            const lang = s.language || "vi";
+            if (lang && i18n.language !== lang) {
+              void i18n.changeLanguage(lang);
+            }
+          } catch (e) {
+            /* Do not fail settings load if language change fails */
+          }
         } catch (error) {
           console.error("Failed to load settings from server:", error);
         }

@@ -3,9 +3,10 @@ import type { Response } from "express";
 import { prisma } from "../lib/prisma";
 import {
   authenticate,
-  requireRole,
+  requirePermission,
   type AuthRequest,
 } from "../middleware/auth";
+import { PERMISSIONS } from "../types/permissions";
 import {
   maieApi,
   handleMaieError,
@@ -189,7 +190,7 @@ router.get("/:id/schema", async (req: AuthRequest, res: Response) => {
  */
 router.post(
   "/",
-  requireRole("admin"),
+  requirePermission(PERMISSIONS.TEMPLATES_WRITE),
   async (req: AuthRequest, res: Response) => {
     try {
       const body = req.body as CreateTemplateDTO;
@@ -230,7 +231,7 @@ router.post(
  */
 router.put(
   "/:id",
-  requireRole("admin"),
+  requirePermission(PERMISSIONS.TEMPLATES_WRITE),
   async (req: AuthRequest, res: Response) => {
     try {
       const templateId = req.params.id;
@@ -269,7 +270,7 @@ router.put(
  */
 router.delete(
   "/:id",
-  requireRole("admin"),
+  requirePermission(PERMISSIONS.TEMPLATES_DELETE),
   async (req: AuthRequest, res: Response) => {
     try {
       const templateId = req.params.id;

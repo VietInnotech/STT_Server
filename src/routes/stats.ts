@@ -1,13 +1,18 @@
-import { Router } from 'express'
-import type { Request, Response } from 'express'
-import { prisma } from '../lib/prisma'
-import { authenticate, requireRole, type AuthRequest } from '../middleware/auth'
-import logger from '../lib/logger'
+import { Router } from "express";
+import type { Request, Response } from "express";
+import { prisma } from "../lib/prisma";
+import {
+  authenticate,
+  requirePermission,
+  type AuthRequest,
+} from "../middleware/auth";
+import { PERMISSIONS } from "../types/permissions";
+import logger from "../lib/logger";
 
-const router = Router()
+const router = Router();
 
 // All routes require authentication
-router.use(authenticate)
+router.use(authenticate);
 
 /**
  * @swagger
@@ -38,143 +43,148 @@ router.use(authenticate)
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/dashboard', requireRole('admin', 'user'), async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const isAdmin = req.user?.roleName === 'admin'
-    
-    // Get total counts
-    const [
-      totalDevices,
-      onlineDevices,
-      totalAudioFiles,
-      totalTextFiles,
-      totalUsers,
-    ] = await Promise.all([
-      prisma.device.count(),
-      prisma.device.count({ where: { isOnline: true } }),
-      prisma.audioFile.count(),
-      prisma.textFile.count(),
-      prisma.user.count(),
-    ])
+router.get(
+  "/dashboard",
+  requirePermission(PERMISSIONS.FILES_READ, PERMISSIONS.DEVICES_READ),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const isAdmin = req.user?.roleName === "admin";
 
-    // Get storage stats
-    const [audioStorage, textStorage] = await Promise.all([
-      prisma.audioFile.aggregate({
-        _sum: {
-          fileSize: true,
-        },
-      }),
-      prisma.textFile.aggregate({
-        _sum: {
-          fileSize: true,
-        },
-      }),
-    ])
+      // Get total counts
+      const [
+        totalDevices,
+        onlineDevices,
+        totalAudioFiles,
+        totalTextFiles,
+        totalUsers,
+      ] = await Promise.all([
+        prisma.device.count(),
+        prisma.device.count({ where: { isOnline: true } }),
+        prisma.audioFile.count(),
+        prisma.textFile.count(),
+        prisma.user.count(),
+      ]);
 
-    const totalStorage = (audioStorage._sum.fileSize || 0) + (textStorage._sum.fileSize || 0)
+      // Get storage stats
+      const [audioStorage, textStorage] = await Promise.all([
+        prisma.audioFile.aggregate({
+          _sum: {
+            fileSize: true,
+          },
+        }),
+        prisma.textFile.aggregate({
+          _sum: {
+            fileSize: true,
+          },
+        }),
+      ]);
 
-    // Get recent activities (audit logs) - admin only
-    let activities: any[] = []
-    if (isAdmin) {
-      const recentActivities = await prisma.auditLog.findMany({
-        take: 10,
-        orderBy: {
-          timestamp: 'desc',
-        },
-        include: {
-          user: {
-            select: {
-              username: true,
-              fullName: true,
+      const totalStorage =
+        (audioStorage._sum.fileSize || 0) + (textStorage._sum.fileSize || 0);
+
+      // Get recent activities (audit logs) - admin only
+      let activities: any[] = [];
+      if (isAdmin) {
+        const recentActivities = await prisma.auditLog.findMany({
+          take: 10,
+          orderBy: {
+            timestamp: "desc",
+          },
+          include: {
+            user: {
+              select: {
+                username: true,
+                fullName: true,
+              },
             },
           },
-        },
-      })
+        });
 
-      // Format recent activities
-      activities = recentActivities.map(log => ({
-        id: log.id,
-        action: log.action,
-        resource: log.resource || 'unknown',
-        user: log.user?.username || 'System',
-        userFullName: log.user?.fullName || null,
-        timestamp: log.timestamp,
-        success: log.success,
-        details: log.details,
-      }))
-    }
+        // Format recent activities
+        activities = recentActivities.map((log) => ({
+          id: log.id,
+          action: log.action,
+          resource: log.resource || "unknown",
+          user: log.user?.username || "System",
+          userFullName: log.user?.fullName || null,
+          timestamp: log.timestamp,
+          success: log.success,
+          details: log.details,
+        }));
+      }
 
-    // Get devices activity (last 24 hours)
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
-    const recentDeviceActivity = await prisma.uptimeHistory.count({
-      where: {
-        timestamp: {
-          gte: oneDayAgo,
-        },
-      },
-    })
-
-    // Get files uploaded today
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    const [audioFilesToday, textFilesToday] = await Promise.all([
-      prisma.audioFile.count({
+      // Get devices activity (last 24 hours)
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const recentDeviceActivity = await prisma.uptimeHistory.count({
         where: {
-          uploadedAt: {
-            gte: today,
+          timestamp: {
+            gte: oneDayAgo,
           },
         },
-      }),
-      prisma.textFile.count({
-        where: {
-          uploadedAt: {
-            gte: today,
+      });
+
+      // Get files uploaded today
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const [audioFilesToday, textFilesToday] = await Promise.all([
+        prisma.audioFile.count({
+          where: {
+            uploadedAt: {
+              gte: today,
+            },
           },
+        }),
+        prisma.textFile.count({
+          where: {
+            uploadedAt: {
+              gte: today,
+            },
+          },
+        }),
+      ]);
+
+      const filesUploadedToday = audioFilesToday + textFilesToday;
+
+      // Get device stats by status
+      const deviceStats = {
+        total: totalDevices,
+        online: onlineDevices,
+        offline: totalDevices - onlineDevices,
+      };
+
+      // Get file stats
+      const fileStats = {
+        audio: totalAudioFiles,
+        text: totalTextFiles,
+        total: totalAudioFiles + totalTextFiles,
+        uploadedToday: filesUploadedToday,
+      };
+
+      res.json({
+        devices: deviceStats,
+        files: fileStats,
+        storage: {
+          total: totalStorage,
+          audio: audioStorage._sum.fileSize || 0,
+          text: textStorage._sum.fileSize || 0,
+          formatted: formatBytes(totalStorage),
         },
-      }),
-    ])
-
-    const filesUploadedToday = audioFilesToday + textFilesToday
-
-    // Get device stats by status
-    const deviceStats = {
-      total: totalDevices,
-      online: onlineDevices,
-      offline: totalDevices - onlineDevices,
+        users: {
+          total: totalUsers,
+        },
+        activity: {
+          deviceEvents24h: recentDeviceActivity,
+          filesUploadedToday,
+        },
+        recentActivities: activities,
+      });
+    } catch (error) {
+      logger.error("Error fetching dashboard stats:", error);
+      res.status(500).json({ error: "Failed to fetch dashboard statistics" });
     }
-
-    // Get file stats
-    const fileStats = {
-      audio: totalAudioFiles,
-      text: totalTextFiles,
-      total: totalAudioFiles + totalTextFiles,
-      uploadedToday: filesUploadedToday,
-    }
-
-    res.json({
-      devices: deviceStats,
-      files: fileStats,
-      storage: {
-        total: totalStorage,
-        audio: audioStorage._sum.fileSize || 0,
-        text: textStorage._sum.fileSize || 0,
-        formatted: formatBytes(totalStorage),
-      },
-      users: {
-        total: totalUsers,
-      },
-      activity: {
-        deviceEvents24h: recentDeviceActivity,
-        filesUploadedToday,
-      },
-      recentActivities: activities,
-    })
-  } catch (error) {
-    logger.error('Error fetching dashboard stats:', error)
-    res.status(500).json({ error: 'Failed to fetch dashboard statistics' })
   }
-})
+);
 
 /**
  * @swagger
@@ -232,66 +242,71 @@ router.get('/dashboard', requireRole('admin', 'user'), async (req: AuthRequest, 
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/devices-chart', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { days = '7' } = req.query
-    const daysInt = parseInt(String(days))
+router.get(
+  "/devices-chart",
+  requirePermission(PERMISSIONS.DEVICES_READ),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { days = "7" } = req.query;
+      const daysInt = parseInt(String(days));
 
-    // Get uptime history for the last N days
-    const startDate = new Date()
-    startDate.setDate(startDate.getDate() - daysInt)
+      // Get uptime history for the last N days
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - daysInt);
 
-    const uptimeHistory = await prisma.uptimeHistory.findMany({
-      where: {
-        timestamp: {
-          gte: startDate,
+      const uptimeHistory = await prisma.uptimeHistory.findMany({
+        where: {
+          timestamp: {
+            gte: startDate,
+          },
         },
-      },
-      orderBy: {
-        timestamp: 'asc',
-      },
-    })
+        orderBy: {
+          timestamp: "asc",
+        },
+      });
 
-    // Group by day and count online/offline events
-    const dailyStats: Record<string, { online: number; offline: number }> = {}
+      // Group by day and count online/offline events
+      const dailyStats: Record<string, { online: number; offline: number }> =
+        {};
 
-    uptimeHistory.forEach(record => {
-      const dateKey = record.timestamp.toISOString().split('T')[0]!
-      if (!dailyStats[dateKey]) {
-        dailyStats[dateKey] = { online: 0, offline: 0 }
-      }
-      if (record.status === 'online') {
-        dailyStats[dateKey].online++
-      } else {
-        dailyStats[dateKey].offline++
-      }
-    })
+      uptimeHistory.forEach((record) => {
+        const dateKey = record.timestamp.toISOString().split("T")[0]!;
+        if (!dailyStats[dateKey]) {
+          dailyStats[dateKey] = { online: 0, offline: 0 };
+        }
+        if (record.status === "online") {
+          dailyStats[dateKey].online++;
+        } else {
+          dailyStats[dateKey].offline++;
+        }
+      });
 
-    // Format for chart
-    const chartData = Object.entries(dailyStats).map(([date, stats]) => ({
-      date,
-      online: stats.online,
-      offline: stats.offline,
-    }))
+      // Format for chart
+      const chartData = Object.entries(dailyStats).map(([date, stats]) => ({
+        date,
+        online: stats.online,
+        offline: stats.offline,
+      }));
 
-    res.json({ data: chartData })
-  } catch (error) {
-    logger.error('Error fetching device chart stats:', error)
-    res.status(500).json({ error: 'Failed to fetch device chart data' })
+      res.json({ data: chartData });
+    } catch (error) {
+      logger.error("Error fetching device chart stats:", error);
+      res.status(500).json({ error: "Failed to fetch device chart data" });
+    }
   }
-})
+);
 
 /**
  * Format bytes to human readable format
  */
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 Bytes'
+  if (bytes === 0) return "0 Bytes";
 
-  const k = 1024
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
 
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
+  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
 }
 
-export default router
+export default router;

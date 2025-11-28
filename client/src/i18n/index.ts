@@ -54,7 +54,10 @@ i18n
   .use(initReactI18next)
   .init({
     resources,
-    fallbackLng: "en",
+    // Default to Vietnamese (vi). Fall back to Vietnamese if detection fails or no stored preference.
+    fallbackLng: "vi",
+    // Force initial language to Vietnamese so new users see the Vietnamese UI by default
+    lng: "vi",
     defaultNS: "common",
     ns: [
       "common",

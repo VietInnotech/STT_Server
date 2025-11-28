@@ -21,6 +21,9 @@ const ADMIN_PERMISSIONS = [
   PERMISSIONS.ROLES_READ,
   PERMISSIONS.ROLES_WRITE,
   PERMISSIONS.ROLES_DELETE,
+  PERMISSIONS.TEMPLATES_READ,
+  PERMISSIONS.TEMPLATES_WRITE,
+  PERMISSIONS.TEMPLATES_DELETE,
 ];
 
 const USER_PERMISSIONS = [
@@ -108,6 +111,21 @@ async function main() {
   });
 
   console.log("✅ Audit log created");
+
+  // Ensure system-wide default language is set to Vietnamese (vi)
+  console.log("Setting default system language to Vietnamese...");
+  await prisma.systemConfig.upsert({
+    where: { key: "system:language" },
+    update: { value: JSON.stringify("vi") },
+    create: {
+      key: "system:language",
+      value: JSON.stringify("vi"),
+      description: "Default system language",
+      updatedById: adminUser.id,
+    },
+  });
+
+  console.log("✅ Default system language set to 'vi'");
 
   console.log("\n🎉 Database seeding completed!");
   console.log("\n📝 Login credentials:");

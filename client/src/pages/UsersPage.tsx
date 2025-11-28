@@ -8,6 +8,7 @@ import {
   Edit2,
   Trash2,
   X,
+  HardDrive,
 } from "lucide-react";
 import { usersApi } from "../lib/api";
 import { formatDate } from "../lib/formatters";
@@ -28,6 +29,16 @@ interface User {
   updatedAt?: string;
 }
 
+interface UserStorageInfo {
+  quotaBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  usagePercent: number;
+  quotaFormatted: string;
+  usedFormatted: string;
+  availableFormatted: string;
+}
+
 interface Role {
   id: string;
   name: string;
@@ -39,6 +50,9 @@ export default function UsersPage() {
   const { t: tCommon } = useTranslation("common");
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [userStorage, setUserStorage] = useState<
+    Record<string, UserStorageInfo>
+  >({});
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -53,6 +67,12 @@ export default function UsersPage() {
     action: "delete" | "toggle" | null;
     user: User | null;
   }>({ action: null, user: null });
+  // Storage quota edit modal state
+  const [quotaModal, setQuotaModal] = useState<{ user: User | null }>({
+    user: null,
+  });
+  const [quotaValue, setQuotaValue] = useState("");
+  const [quotaUnit, setQuotaUnit] = useState<"MB" | "GB">("GB");
 
   // Fetch users and roles
   const fetchData = async () => {
@@ -63,6 +83,24 @@ export default function UsersPage() {
       ]);
       setUsers(usersRes.data.users);
       setRoles(rolesRes.data.roles);
+
+      // Fetch storage info for each user
+      const storagePromises = usersRes.data.users.map(async (user: User) => {
+        try {
+          const res = await usersApi.getStorage(user.id);
+          return { userId: user.id, storage: res.data };
+        } catch {
+          return { userId: user.id, storage: null };
+        }
+      });
+      const storageResults = await Promise.all(storagePromises);
+      const storageMap: Record<string, UserStorageInfo> = {};
+      storageResults.forEach(({ userId, storage }) => {
+        if (storage) {
+          storageMap[userId] = storage;
+        }
+      });
+      setUserStorage(storageMap);
     } catch (error) {
       console.error("Failed to fetch data:", error);
       toast.error(t("failedToLoad"));
@@ -175,6 +213,57 @@ export default function UsersPage() {
     setConfirmModal({ action: "toggle", user });
   };
 
+  // Storage quota modal handlers
+  const openQuotaModal = (user: User) => {
+    const storage = userStorage[user.id];
+    if (storage) {
+      // Convert bytes to GB for display
+      const quotaGB = storage.quotaBytes / (1024 * 1024 * 1024);
+      if (quotaGB >= 1) {
+        setQuotaValue(quotaGB.toString());
+        setQuotaUnit("GB");
+      } else {
+        const quotaMB = storage.quotaBytes / (1024 * 1024);
+        setQuotaValue(quotaMB.toString());
+        setQuotaUnit("MB");
+      }
+    } else {
+      setQuotaValue("1");
+      setQuotaUnit("GB");
+    }
+    setQuotaModal({ user });
+  };
+
+  const closeQuotaModal = () => {
+    setQuotaModal({ user: null });
+    setQuotaValue("");
+    setQuotaUnit("GB");
+  };
+
+  const handleQuotaSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quotaModal.user) return;
+
+    const numericValue = parseFloat(quotaValue);
+    if (isNaN(numericValue) || numericValue <= 0) {
+      toast.error(t("invalidQuotaValue"));
+      return;
+    }
+
+    // Convert to bytes
+    const multiplier = quotaUnit === "GB" ? 1024 * 1024 * 1024 : 1024 * 1024;
+    const quotaBytes = Math.floor(numericValue * multiplier);
+
+    try {
+      await usersApi.updateQuota(quotaModal.user.id, quotaBytes);
+      toast.success(t("quotaUpdated"));
+      closeQuotaModal();
+      fetchData();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || t("failedToUpdateQuota"));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -246,6 +335,46 @@ export default function UsersPage() {
                   <span className="text-gray-600">
                     {t("lastLogin")}: {formatDate(user.lastLogin)}
                   </span>
+                </div>
+              )}
+              {/* Storage quota display */}
+              {userStorage[user.id] && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <div className="flex items-center gap-2">
+                      <HardDrive className="h-4 w-4 text-gray-400" />
+                      <span className="text-gray-600">{t("storage")}</span>
+                    </div>
+                    <button
+                      onClick={() => openQuotaModal(user)}
+                      className="text-xs text-blue-600 hover:text-blue-700"
+                    >
+                      {t("editQuota")}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 bg-gray-200 rounded-full h-2">
+                      <div
+                        className={`h-2 rounded-full transition-all ${
+                          userStorage[user.id].usagePercent >= 90
+                            ? "bg-red-500"
+                            : userStorage[user.id].usagePercent >= 70
+                            ? "bg-yellow-500"
+                            : "bg-blue-500"
+                        }`}
+                        style={{
+                          width: `${Math.min(
+                            userStorage[user.id].usagePercent,
+                            100
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 whitespace-nowrap">
+                      {userStorage[user.id].usedFormatted} /{" "}
+                      {userStorage[user.id].quotaFormatted}
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
@@ -480,6 +609,68 @@ export default function UsersPage() {
               </button>
             </div>
           </div>
+        </Modal>
+      )}
+
+      {/* Storage Quota Edit Modal */}
+      {quotaModal.user && (
+        <Modal
+          title={t("editStorageQuota", { username: quotaModal.user.username })}
+          open={true}
+          onClose={closeQuotaModal}
+          maxWidth="sm"
+          footer={
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={closeQuotaModal}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                {tCommon("cancel")}
+              </button>
+              <button
+                type="submit"
+                form="quota-form"
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                {tCommon("update")}
+              </button>
+            </div>
+          }
+        >
+          <form
+            id="quota-form"
+            onSubmit={handleQuotaSubmit}
+            className="space-y-4"
+          >
+            <div>
+              <FormLabel required>{t("storageQuota")}</FormLabel>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  required
+                  value={quotaValue}
+                  onChange={(e) => setQuotaValue(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="1"
+                />
+                <select
+                  value={quotaUnit}
+                  onChange={(e) => setQuotaUnit(e.target.value as "MB" | "GB")}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="MB">MB</option>
+                  <option value="GB">GB</option>
+                </select>
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                {t("currentUsage")}:{" "}
+                {userStorage[quotaModal.user.id]?.usedFormatted || "0 B"}
+              </p>
+            </div>
+          </form>
         </Modal>
       )}
     </div>

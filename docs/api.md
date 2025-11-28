@@ -8,6 +8,7 @@
 ## Two Distinct Endpoints
 
 Based on your requirement that:
+
 - **Android app**: sends request with both `summary` and `realtime` in ONE request
 - **WebUI**: uploads ONE file at a time
 
@@ -34,6 +35,7 @@ We recommend **TWO separate endpoints**:
 ```
 
 **Response:** 201 Created
+
 ```json
 {
   "success": true,
@@ -48,6 +50,7 @@ We recommend **TWO separate endpoints**:
 ```
 
 **Key Features:**
+
 - ✅ Single HTTP request
 - ✅ JSON payload (easy in Android)
 - ✅ Automatic TextFilePair creation
@@ -76,6 +79,7 @@ deviceId: "device-uuid"
 ```
 
 **Response:** 201 Created
+
 ```json
 {
   "success": true,
@@ -90,6 +94,7 @@ deviceId: "device-uuid"
 ```
 
 **Key Features:**
+
 - ✅ Supports partial uploads (only summary OR only realtime)
 - ✅ File upload via form (browser standard)
 - ✅ Uses actual filenames from upload
@@ -103,17 +108,20 @@ deviceId: "device-uuid"
 Both endpoints create the same database structures:
 
 ### TextFile Records (2 per pair)
+
 - One for summary content
 - One for realtime content
 - Each encrypted separately with AES-256
 - Both have `origin: "android"` (for Android endpoint) or `origin: "web"` (for WebUI)
 
 ### TextFilePair Record (1 per pair)
+
 - Links the two TextFile records
 - Stores pair name, timestamps, owner
 - Enables cascade deletion (delete pair = delete both files)
 
 ### Audit Log Entry
+
 - `action: "files.upload-pair-android"` (for Android endpoint)
 - `action: "files.upload-pair-web"` (for WebUI endpoint)
 - Tracks who uploaded, when, file sizes, etc.
@@ -123,6 +131,7 @@ Both endpoints create the same database structures:
 ## User Workflow Comparison
 
 ### Android User
+
 1. App captures or generates summary text
 2. App captures or generates realtime text
 3. App calls `POST /api/files/text-pair-android` with both
@@ -130,6 +139,7 @@ Both endpoints create the same database structures:
 5. App receives pair ID and confirms to user
 
 ### WebUI User
+
 1. User selects "Upload Comparison (2 Files)" button
 2. Dialog appears:
    - "Summary File (optional)" - drag drop or click to select
@@ -146,39 +156,43 @@ Both endpoints create the same database structures:
 
 ## Comparison: Android vs WebUI
 
-| Feature | Android Endpoint | WebUI Endpoint |
-|---------|------------------|----------------|
-| **Protocol** | REST JSON | REST multipart |
-| **Data Type** | Text strings | File uploads |
-| **Requests** | 1 | 1 (for both files) |
-| **Required Fields** | summary + realtime | at least 1 file |
-| **Filenames** | Auto-generated | From uploaded files |
-| **Pair Creation** | Automatic | Automatic |
-| **Authentication** | JWT Bearer token | JWT Bearer token |
-| **Error Handling** | HTTP status codes | HTTP status codes |
-| **Ideal For** | Android app | Web browser |
+| Feature             | Android Endpoint   | WebUI Endpoint      |
+| ------------------- | ------------------ | ------------------- |
+| **Protocol**        | REST JSON          | REST multipart      |
+| **Data Type**       | Text strings       | File uploads        |
+| **Requests**        | 1                  | 1 (for both files)  |
+| **Required Fields** | summary + realtime | at least 1 file     |
+| **Filenames**       | Auto-generated     | From uploaded files |
+| **Pair Creation**   | Automatic          | Automatic           |
+| **Authentication**  | JWT Bearer token   | JWT Bearer token    |
+| **Error Handling**  | HTTP status codes  | HTTP status codes   |
+| **Ideal For**       | Android app        | Web browser         |
 
 ---
 
 ## Implementation Order
 
 ### Phase 1: Database & Android Endpoint (Week 1)
+
 1. Create database migration (add TextFilePair model)
-2. Implement `POST /api/files/text-pair-android` 
+2. Implement `POST /api/files/text-pair-android`
 3. Add tests for Android endpoint
 4. Test with Postman or curl
 
 ### Phase 2: WebUI Endpoint & Integration (Week 1-2)
+
 5. Implement `POST /api/files/text-pair` (multipart)
 6. Update `GET /api/files/all` to include pairs
 7. Update Swagger documentation
 
 ### Phase 3: Frontend (Week 2-3)
+
 8. Add upload modal to FilesPage
 9. Add comparison view modal
 10. Update file list to show pairs
 
 ### Phase 4: Testing & Polish (Week 3-4)
+
 11. E2E testing
 12. Android app testing
 13. Performance testing
@@ -189,20 +203,24 @@ Both endpoints create the same database structures:
 ## Benefits of This Design
 
 ### Separation of Concerns
+
 - Each endpoint optimized for its use case (JSON vs multipart)
 - Clear contract for each client (Android vs WebUI)
 - Different validation rules per endpoint
 
 ### User Experience
+
 - Android: Simple single request, no file system involved
 - WebUI: Familiar file upload interface
 
 ### Flexibility
+
 - Either or both files can be provided (WebUI)
 - Both files required (Android) - simpler contract
 - Easy to add other formats later (audio pair, mixed media, etc.)
 
 ### Maintainability
+
 - Clear endpoint purpose
 - Easier to debug (specific to each platform)
 - Independent versioning if needed
@@ -213,6 +231,7 @@ Both endpoints create the same database structures:
 ## Security
 
 Both endpoints:
+
 - ✅ Require authentication (JWT)
 - ✅ Encrypt data with AES-256
 - ✅ Validate input size (100MB combined)
@@ -225,6 +244,7 @@ Both endpoints:
 ## Documentation Files Created
 
 1. **`DUAL_TEXT_FILE_COMPARISON_PLAN.md`** - Updated with:
+
    - Android endpoint specification in Phase 2.0
    - Kotlin code examples
    - Android-specific test scenarios
@@ -254,6 +274,7 @@ Both endpoints:
 ---
 
 **Questions?** Review the documentation or let me know what needs clarification!
+
 # Text Pair Upload - Request/Response Examples
 
 Quick reference for the two new API endpoints with real examples.
@@ -275,6 +296,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ```
 
 **Response (201 Created):**
+
 ```json
 {
   "success": true,
@@ -314,6 +336,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ```
 
 **Response (201 Created):**
+
 ```json
 {
   "success": true,
@@ -340,6 +363,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ### Error Examples
 
 #### Missing Summary Field
+
 ```bash
 curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
   -H "Content-Type: application/json" \
@@ -350,6 +374,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ```
 
 **Response (400 Bad Request):**
+
 ```json
 {
   "error": "Field \"summary\" is required and must be non-empty string"
@@ -359,6 +384,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ---
 
 #### Empty Realtime Field
+
 ```bash
 curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
   -H "Content-Type: application/json" \
@@ -370,6 +396,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ```
 
 **Response (400 Bad Request):**
+
 ```json
 {
   "error": "Field \"realtime\" is required and must be non-empty string"
@@ -379,6 +406,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ---
 
 #### Payload Too Large
+
 ```bash
 curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
   -H "Content-Type: application/json" \
@@ -390,6 +418,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ```
 
 **Response (413 Payload Too Large):**
+
 ```json
 {
   "error": "Payload too large. Maximum 100MB combined, got 110MB"
@@ -399,6 +428,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ---
 
 #### Missing Authentication
+
 ```bash
 curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
   -H "Content-Type: application/json" \
@@ -409,6 +439,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair-android \
 ```
 
 **Response (401 Unauthorized):**
+
 ```json
 {
   "error": "User not authenticated"
@@ -431,6 +462,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair \
 ```
 
 **Response (201 Created):**
+
 ```json
 {
   "success": true,
@@ -464,6 +496,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair \
 ```
 
 **Response (201 Created):**
+
 ```json
 {
   "success": true,
@@ -495,6 +528,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair \
 ```
 
 **Response (201 Created):**
+
 ```json
 {
   "success": true,
@@ -524,6 +558,7 @@ curl -X POST http://192.168.1.100:3000/api/files/text-pair \
 ```
 
 **Response (400 Bad Request):**
+
 ```json
 {
   "error": "At least one file (summaryFile or realtimeFile) is required"
@@ -542,6 +577,7 @@ curl -X GET http://192.168.1.100:3000/api/files/text-pair/d4c3b2a1-0f9e-8d7c-6b5
 ```
 
 **Response (200 OK):**
+
 ```json
 {
   "success": true,
@@ -578,6 +614,7 @@ curl -X GET http://192.168.1.100:3000/api/files/text-pair/d4c3b2a1-0f9e-8d7c-6b5
 ```
 
 **Response (200 OK):**
+
 ```json
 {
   "success": true,
@@ -604,6 +641,7 @@ curl -X GET http://192.168.1.100:3000/api/files/all?limit=20 \
 ```
 
 **Response (200 OK):**
+
 ```json
 {
   "success": true,
@@ -644,6 +682,7 @@ curl -X DELETE http://192.168.1.100:3000/api/files/text-pair/d4c3b2a1-0f9e-8d7c-
 ```
 
 **Response (200 OK):**
+
 ```json
 {
   "success": true,
@@ -655,31 +694,263 @@ curl -X DELETE http://192.168.1.100:3000/api/files/text-pair/d4c3b2a1-0f9e-8d7c-
 
 ## Quick Comparison Table
 
-| Operation | Endpoint | Method | Body Type | Example |
-|-----------|----------|--------|-----------|---------|
-| Android upload | `/api/files/text-pair-android` | POST | JSON | `{"summary":"...", "realtime":"..."}` |
-| WebUI upload (both) | `/api/files/text-pair` | POST | multipart | `-F "summaryFile=@file1" -F "realtimeFile=@file2"` |
-| WebUI upload (one) | `/api/files/text-pair` | POST | multipart | `-F "summaryFile=@file"` |
-| Get pair details | `/api/files/text-pair/{id}` | GET | N/A | - |
-| Get comparison | `/api/files/text-pair/{id}/compare` | GET | N/A | - |
-| List all pairs | `/api/files/all` | GET | N/A | `?limit=20` |
-| Delete pair | `/api/files/text-pair/{id}` | DELETE | N/A | - |
+| Operation           | Endpoint                            | Method | Body Type | Example                                            |
+| ------------------- | ----------------------------------- | ------ | --------- | -------------------------------------------------- |
+| Android upload      | `/api/files/text-pair-android`      | POST   | JSON      | `{"summary":"...", "realtime":"..."}`              |
+| WebUI upload (both) | `/api/files/text-pair`              | POST   | multipart | `-F "summaryFile=@file1" -F "realtimeFile=@file2"` |
+| WebUI upload (one)  | `/api/files/text-pair`              | POST   | multipart | `-F "summaryFile=@file"`                           |
+| Get pair details    | `/api/files/text-pair/{id}`         | GET    | N/A       | -                                                  |
+| Get comparison      | `/api/files/text-pair/{id}/compare` | GET    | N/A       | -                                                  |
+| List all pairs      | `/api/files/all`                    | GET    | N/A       | `?limit=20`                                        |
+| Delete pair         | `/api/files/text-pair/{id}`         | DELETE | N/A       | -                                                  |
 
 ---
 
 ## Status Codes Reference
 
-| Code | Meaning | Endpoint |
-|------|---------|----------|
-| 201 | Successfully created | POST /api/files/text-pair* |
-| 200 | Success (GET/DELETE) | GET /api/files/... |
-| 400 | Bad request (missing/invalid fields) | POST endpoints |
-| 401 | Unauthorized (missing auth) | All authenticated endpoints |
-| 403 | Forbidden (not owner/admin) | GET, DELETE endpoints |
-| 404 | Not found | GET by ID endpoints |
-| 413 | Payload too large | POST endpoints |
-| 429 | Rate limit exceeded | Any endpoint |
-| 500 | Server error | Any endpoint |
+| Code | Meaning                              | Endpoint                    |
+| ---- | ------------------------------------ | --------------------------- |
+| 201  | Successfully created                 | POST /api/files/text-pair\* |
+| 200  | Success (GET/DELETE)                 | GET /api/files/...          |
+| 400  | Bad request (missing/invalid fields) | POST endpoints              |
+| 401  | Unauthorized (missing auth)          | All authenticated endpoints |
+| 403  | Forbidden (not owner/admin)          | GET, DELETE endpoints       |
+| 404  | Not found                            | GET by ID endpoints         |
+| 413  | Payload too large                    | POST endpoints              |
+| 429  | Rate limit exceeded                  | Any endpoint                |
+| 500  | Server error                         | Any endpoint                |
+
+---
+
+## Phase 2: Enhanced Search & Filtering
+
+**Date:** November 28, 2025  
+**Status:** ✅ Complete
+
+### Overview
+
+Phase 2 adds comprehensive search and filtering capabilities to processing results. Users can filter by confidence range, status, duration, date range, templates, and tags. Results can be sorted by date, title, confidence, or duration.
+
+### Updated Endpoints
+
+#### `GET /api/files/results` - List Results with Filters
+
+**New Parameters:**
+
+```
+?status=completed             # pending|completed|failed|all
+?minConfidence=0.8            # 0.0-1.0
+?maxConfidence=1.0            # 0.0-1.0
+?tags=meeting,urgent          # comma-separated
+?templateId=generic_summary   # template UUID
+?fromDate=2025-11-20          # YYYY-MM-DD
+?toDate=2025-11-27            # YYYY-MM-DD
+?sortBy=confidence            # date|title|confidence|duration
+?order=desc                   # asc|desc
+?limit=50                     # 1-100
+?offset=0                     # pagination offset
+```
+
+**Example Request:**
+
+```bash
+GET /api/files/results?minConfidence=0.8&status=completed&sortBy=duration&order=desc
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**Example Response:**
+
+```json
+{
+  "success": true,
+  "results": [
+    {
+      "id": "9b245b97-c283-4176-b31c-34fc7cf6328f",
+      "title": "Tổng hợp tin tức 30 giây nóng",
+      "templateId": "generic_summary_v2",
+      "tags": ["tin tức", "báo", "an ninh"],
+      "confidence": 0.89,
+      "processingTime": 33.85,
+      "audioDuration": 827.79,
+      "status": "completed",
+      "processedAt": "2025-11-27T10:12:08.488Z"
+    }
+  ],
+  "pagination": {
+    "total": 42,
+    "limit": 50,
+    "offset": 0,
+    "hasMore": false
+  }
+}
+```
+
+**Status Codes:**
+
+- 200 OK - Results returned
+- 401 Unauthorized - Missing/invalid JWT
+- 403 Forbidden - Insufficient permissions (PERMISSIONS.FILES_READ required)
+
+#### `GET /api/files/search` - Advanced Search
+
+Same parameters as `/results`, plus:
+
+```
+?q=search_term                # Search in title
+```
+
+**Example:**
+
+```bash
+GET /api/files/search?q=meeting&minConfidence=0.7&status=all&sortBy=confidence
+```
+
+### Filter Details
+
+#### Confidence Range
+
+- **Parameter:** `minConfidence`, `maxConfidence`
+- **Type:** number (0.0-1.0)
+- **Effect:** Filters by ASR confidence scores
+- **Example:** `minConfidence=0.8&maxConfidence=0.95` returns results with confidence between 0.8 and 0.95
+
+#### Status Filter
+
+- **Parameter:** `status`
+- **Valid Values:** `pending`, `completed`, `failed`, `all`
+- **Default:** `all` (when not specified)
+- **Effect:** Only returns results with specified status
+
+#### Duration Filter (via Sorting)
+
+- **Parameter:** `sortBy=duration` (not a direct filter, but sort option)
+- **Type:** Numeric (seconds)
+- **Effect:** Sort by `audioDuration` field
+
+#### Date Range
+
+- **Parameters:** `fromDate`, `toDate`
+- **Format:** YYYY-MM-DD
+- **Effect:** Filters results processed between these dates (inclusive)
+- **Example:** `fromDate=2025-11-20&toDate=2025-11-27`
+
+#### Tag Filter
+
+- **Parameter:** `tags` (comma-separated)
+- **Format:** `tags=tag1,tag2,tag3`
+- **Effect:** Returns results containing ANY of the specified tags
+- **Note:** Tags are case-insensitive and normalized to NFC
+
+#### Template Filter
+
+- **Parameter:** `templateId`
+- **Format:** UUID string
+- **Effect:** Returns results processed with specified template
+
+### Sorting Options
+
+| Value        | Effect                         | Direction Support |
+| ------------ | ------------------------------ | ----------------- |
+| `date`       | By `processedAt` timestamp     | asc/desc          |
+| `title`      | By result title (alphabetical) | asc/desc          |
+| `confidence` | By ASR confidence score        | asc/desc          |
+| `duration`   | By `audioDuration`             | asc/desc          |
+
+**Default:** `sortBy=date&order=desc`
+
+### Response Format Changes
+
+**⚠️ Breaking Change for `/api/files/results`**
+
+**Old Format:**
+
+```json
+{
+  "success": true,
+  "results": [...],
+  "total": 100,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**New Format:**
+
+```json
+{
+  "success": true,
+  "results": [...],
+  "pagination": {
+    "total": 100,
+    "limit": 50,
+    "offset": 0,
+    "hasMore": true
+  }
+}
+```
+
+**Migration:** Clients must update code:
+
+```javascript
+// Old
+const total = response.total;
+const limit = response.limit;
+const offset = response.offset;
+
+// New
+const total = response.pagination.total;
+const limit = response.pagination.limit;
+const offset = response.pagination.offset;
+const hasMore = response.pagination.hasMore;
+```
+
+### Performance Characteristics
+
+| Operation                    | Typical Time | Constraints          |
+| ---------------------------- | ------------ | -------------------- |
+| List 50 results (no filters) | ~80ms        | None                 |
+| Search with 1 filter         | ~150ms       | Single-field queries |
+| Search with 3-4 filters      | ~200ms       | Composite filters    |
+| Tag aggregation (50 tags)    | ~50ms        | None                 |
+| Large result set (1000+)     | ~500ms       | Consider pagination  |
+
+### Frontend Integration
+
+#### React Hook Example
+
+```typescript
+const [filters, setFilters] = useState({
+  q: "",
+  tags: [],
+  templateId: "",
+  minConfidence: null,
+  maxConfidence: null,
+  status: "completed",
+  sortBy: "date",
+  order: "desc",
+  limit: 50,
+  offset: 0,
+});
+
+const fetchResults = async () => {
+  const res = await filesApi.searchResults(filters);
+  setResults(res.data.results);
+  setPagination(res.data.pagination);
+};
+```
+
+#### SearchFiltersPanel Component
+
+```typescript
+import SearchFiltersPanel from "./SearchFiltersPanel";
+
+<SearchFiltersPanel
+  filters={filters}
+  onChange={setFilters}
+  availableTags={tags}
+  availableTemplates={templates}
+/>;
+```
 
 ---
 

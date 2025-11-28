@@ -46,5 +46,13 @@
   "templateUploaded": "Template uploaded successfully",
   "failedToUploadTemplate": "Failed to upload template",
   "provideJsonTemplate": "Please provide a JSON template as a file or paste the JSON text",
-  "invalidJson": "Invalid JSON"
+  "invalidJson": "Invalid JSON",
+  "storage": "Storage",
+  "editQuota": "Edit Quota",
+  "editStorageQuota": "Edit Storage Quota for {{username}}",
+  "storageQuota": "Storage Quota",
+  "currentUsage": "Current usage",
+  "quotaUpdated": "Storage quota updated successfully",
+  "failedToUpdateQuota": "Failed to update storage quota",
+  "invalidQuotaValue": "Please enter a valid quota value"
 }

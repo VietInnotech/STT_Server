@@ -46,5 +46,13 @@
   "templateUploaded": "Tải mẫu thành công",
   "failedToUploadTemplate": "Không thể tải mẫu",
   "provideJsonTemplate": "Vui lòng cung cấp mẫu JSON dưới dạng tệp hoặc dán văn bản JSON",
-  "invalidJson": "JSON không hợp lệ"
+  "invalidJson": "JSON không hợp lệ",
+  "storage": "Dung lượng",
+  "editQuota": "Sửa hạn mức",
+  "editStorageQuota": "Sửa hạn mức dung lượng cho {{username}}",
+  "storageQuota": "Hạn mức dung lượng",
+  "currentUsage": "Đang sử dụng",
+  "quotaUpdated": "Cập nhật hạn mức thành công",
+  "failedToUpdateQuota": "Không thể cập nhật hạn mức",
+  "invalidQuotaValue": "Vui lòng nhập giá trị hạn mức hợp lệ"
 }

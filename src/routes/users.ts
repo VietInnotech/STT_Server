@@ -10,6 +10,12 @@ import {
 } from "../middleware/auth";
 import { PERMISSIONS } from "../types/permissions";
 import logger from "../lib/logger";
+import {
+  getUserStorageInfo,
+  setUserStorageQuota,
+  formatBytes,
+  DEFAULT_STORAGE_QUOTA_BYTES,
+} from "../services/storageService";
 
 const router = Router();
 
@@ -90,6 +96,56 @@ router.get(
     } catch (error) {
       logger.error("Error fetching users:", error);
       res.status(500).json({ error: "Failed to fetch users" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/users/storage:
+ *   get:
+ *     summary: Get current user's storage usage and quota
+ *     description: Returns storage quota, current usage, available space, and breakdown by file type
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Storage info retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
+router.get(
+  "/storage",
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.user?.userId) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const info = await getUserStorageInfo(req.user.userId);
+
+      res.json({
+        quotaBytes: info.quotaBytes.toString(),
+        usedBytes: info.usedBytes.toString(),
+        availableBytes: info.availableBytes.toString(),
+        usagePercent: info.usagePercent,
+        quotaFormatted: formatBytes(info.quotaBytes),
+        usedFormatted: formatBytes(info.usedBytes),
+        availableFormatted: formatBytes(info.availableBytes),
+        breakdown: {
+          audioBytes: info.breakdown.audioBytes.toString(),
+          textBytes: info.breakdown.textBytes.toString(),
+          processingResultBytes:
+            info.breakdown.processingResultBytes.toString(),
+        },
+      });
+    } catch (error) {
+      logger.error("Error fetching storage info:", error);
+      res.status(500).json({ error: "Failed to fetch storage info" });
     }
   }
 );
@@ -178,13 +234,11 @@ router.post(
       });
 
       if (existingUser) {
-        res
-          .status(400)
-          .json({
-            error: email
-              ? "Username or email already exists"
-              : "Username already exists",
-          });
+        res.status(400).json({
+          error: email
+            ? "Username or email already exists"
+            : "Username already exists",
+        });
         return;
       }
 
@@ -499,6 +553,172 @@ router.get(
     } catch (error) {
       logger.error("Error fetching roles:", error);
       res.status(500).json({ error: "Failed to fetch roles" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/users/{id}/storage:
+ *   get:
+ *     summary: Get a specific user's storage usage (admin only)
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Storage info retrieved successfully
+ *       403:
+ *         description: Forbidden - admin only
+ *       404:
+ *         description: User not found
+ */
+router.get(
+  "/:id/storage",
+  requirePermission(PERMISSIONS.USERS_READ),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const id = req.params.id;
+      if (!id) {
+        res.status(400).json({ error: "User ID is required" });
+        return;
+      }
+
+      // Verify user exists
+      const user = await prisma.user.findUnique({ where: { id } });
+      if (!user) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      const info = await getUserStorageInfo(id);
+
+      res.json({
+        userId: id,
+        username: user.username,
+        quotaBytes: info.quotaBytes.toString(),
+        usedBytes: info.usedBytes.toString(),
+        availableBytes: info.availableBytes.toString(),
+        usagePercent: info.usagePercent,
+        quotaFormatted: formatBytes(info.quotaBytes),
+        usedFormatted: formatBytes(info.usedBytes),
+        availableFormatted: formatBytes(info.availableBytes),
+        breakdown: {
+          audioBytes: info.breakdown.audioBytes.toString(),
+          textBytes: info.breakdown.textBytes.toString(),
+          processingResultBytes:
+            info.breakdown.processingResultBytes.toString(),
+        },
+      });
+    } catch (error) {
+      logger.error("Error fetching user storage info:", error);
+      res.status(500).json({ error: "Failed to fetch storage info" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/users/{id}/storage/quota:
+ *   put:
+ *     summary: Update a user's storage quota (admin only)
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - quotaBytes
+ *             properties:
+ *               quotaBytes:
+ *                 type: integer
+ *                 description: New quota in bytes (min 0, use 0 for unlimited)
+ *                 example: 5368709120
+ *     responses:
+ *       200:
+ *         description: Quota updated successfully
+ *       400:
+ *         description: Invalid quota value
+ *       403:
+ *         description: Forbidden - admin only
+ *       404:
+ *         description: User not found
+ */
+router.put(
+  "/:id/storage/quota",
+  requirePermission(PERMISSIONS.USERS_WRITE),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const id = req.params.id;
+      if (!id) {
+        res.status(400).json({ error: "User ID is required" });
+        return;
+      }
+
+      const { quotaBytes } = req.body as { quotaBytes?: number | string };
+
+      // Validate input
+      if (quotaBytes === undefined || quotaBytes === null) {
+        res.status(400).json({ error: "quotaBytes is required" });
+        return;
+      }
+
+      const quotaBigInt = BigInt(quotaBytes);
+      if (quotaBigInt < 0) {
+        res.status(400).json({ error: "quotaBytes must be non-negative" });
+        return;
+      }
+
+      // Verify user exists
+      const user = await prisma.user.findUnique({ where: { id } });
+      if (!user) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      await setUserStorageQuota(id, quotaBigInt);
+
+      // Audit log
+      await prisma.auditLog.create({
+        data: {
+          userId: req.user!.userId,
+          action: "user.storage_quota_update",
+          resource: "user",
+          resourceId: id,
+          details: {
+            newQuotaBytes: quotaBigInt.toString(),
+            updatedBy: req.user!.username,
+          },
+          ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+          userAgent: req.headers["user-agent"] || "unknown",
+        },
+      });
+
+      res.json({
+        success: true,
+        message: "Storage quota updated",
+        quotaBytes: quotaBigInt.toString(),
+        quotaFormatted: formatBytes(quotaBigInt),
+      });
+    } catch (error) {
+      logger.error("Error updating storage quota:", error);
+      res.status(500).json({ error: "Failed to update storage quota" });
     }
   }
 );

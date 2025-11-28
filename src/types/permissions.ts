@@ -31,6 +31,11 @@ export const PERMISSIONS = {
   ROLES_READ: "roles.read",
   ROLES_WRITE: "roles.write",
   ROLES_DELETE: "roles.delete",
+
+  // Template Management
+  TEMPLATES_READ: "templates.read",
+  TEMPLATES_WRITE: "templates.write",
+  TEMPLATES_DELETE: "templates.delete",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -61,6 +66,11 @@ export const PERMISSION_CATEGORIES = {
     PERMISSIONS.ROLES_WRITE,
     PERMISSIONS.ROLES_DELETE,
   ],
+  templates: [
+    PERMISSIONS.TEMPLATES_READ,
+    PERMISSIONS.TEMPLATES_WRITE,
+    PERMISSIONS.TEMPLATES_DELETE,
+  ],
 } as const;
 
 /**
@@ -89,6 +99,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     PERMISSIONS.ROLES_READ,
     PERMISSIONS.ROLES_WRITE,
     PERMISSIONS.ROLES_DELETE,
+    PERMISSIONS.TEMPLATES_READ,
+    PERMISSIONS.TEMPLATES_WRITE,
+    PERMISSIONS.TEMPLATES_DELETE,
   ],
   user: [
     PERMISSIONS.DEVICES_READ,

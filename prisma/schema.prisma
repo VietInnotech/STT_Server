@@ -114,6 +114,10 @@ model UserSettings {
   // File Management Preferences
   defaultDeleteAfterDays Int? // Default auto-delete period for uploaded files (null = never delete)
 
+  // Storage Quota (bytes)
+  storageQuotaBytes BigInt @default(1073741824) // Default 1GB quota (1024^3 bytes)
+  storageUsedBytes  BigInt @default(0)          // Current storage usage in bytes
+
   // UI Preferences (expandable for future settings)
   theme    String? @default("light")
   language String? @default("en")

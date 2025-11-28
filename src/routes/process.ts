@@ -14,6 +14,7 @@ import {
 } from "../lib/maieProxy";
 import logger from "../lib/logger";
 import { emitToUser } from "../lib/socketBus";
+import { encrypt } from "../utils/encryption";
 
 const router = Router();
 
@@ -365,15 +366,35 @@ router.get("/:taskId/status", authenticate, async (req: AuthRequest, res) => {
         maieStatus.results.clean_transcript ||
         maieStatus.results.raw_transcript;
 
+      // Encrypt summary and transcript for secure storage
+      const summaryText = summary.summary || "";
+      const { encryptedData: summaryEncrypted, encryptedIV: summaryIv } =
+        encrypt(Buffer.from(summaryText.normalize("NFC")));
+
+      let transcriptEncrypted: Buffer | null = null;
+      let transcriptIv: string | null = null;
+      if (transcript) {
+        const enc = encrypt(Buffer.from(transcript.normalize("NFC")));
+        transcriptEncrypted = enc.encryptedData;
+        transcriptIv = enc.encryptedIV;
+      }
+
       // Update DB with results
-      // TODO: Encrypt content before storing for production
       await prisma.processingResult.update({
         where: { id: taskId },
         data: {
           status: "completed",
           maieStatus: "COMPLETE",
-          title: summary.title,
-          summaryPreview: summary.summary.slice(0, 200),
+          title: (summary.title || "").normalize("NFC"),
+          summaryData: summaryEncrypted,
+          summaryIv,
+          summaryPreview: summaryText.normalize("NFC").slice(0, 200),
+          summarySize: Buffer.byteLength(summaryText, "utf8"),
+          transcriptData: transcriptEncrypted,
+          transcriptIv,
+          transcriptSize: transcript
+            ? Buffer.byteLength(transcript, "utf8")
+            : null,
           confidence: maieStatus.metrics?.asr_confidence_avg,
           processingTime: maieStatus.metrics?.processing_time_seconds,
           audioDuration: maieStatus.metrics?.input_duration_seconds,
