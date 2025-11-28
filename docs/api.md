@@ -955,3 +955,156 @@ import SearchFiltersPanel from "./SearchFiltersPanel";
 ---
 
 **End of Examples**
+
+---
+
+## Audio File Storage (Updated November 2025)
+
+Audio files are now stored on the filesystem with AES-256-GCM encryption, providing better performance for large files.
+
+### Storage Location
+
+- **Default Path:** `./data/audio/{userId}/{fileId}.enc`
+- **Configurable:** Set `AUDIO_STORAGE_PATH` environment variable
+
+### `POST /api/files/audio` - Upload Audio File
+
+Uploads and encrypts an audio file to filesystem storage.
+
+**Request:** `multipart/form-data`
+
+```bash
+curl -X POST http://localhost:3000/api/files/audio \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@recording.wav" \
+  -F "deviceId=device-uuid" \
+  -F "deleteAfterDays=30"
+```
+
+**Response (201 Created):**
+
+```json
+{
+  "success": true,
+  "file": {
+    "id": "3d0211a3-74aa-4dda-bfa8-5682c5adb612",
+    "filename": "recording.wav",
+    "fileSize": 422508,
+    "mimeType": "audio/wav",
+    "uploadedAt": "2025-11-28T06:28:15.123Z"
+  }
+}
+```
+
+### `GET /api/files/audio/:id` - Download Audio File
+
+Streams decrypted audio file content.
+
+**Request:**
+
+```bash
+curl -X GET http://localhost:3000/api/files/audio/3d0211a3-74aa-4dda-bfa8-5682c5adb612 \
+  -H "Authorization: Bearer <token>" \
+  -o downloaded.wav
+```
+
+**Response:** Binary audio data with appropriate `Content-Type` header.
+
+### `DELETE /api/files/audio/:id` - Delete Audio File
+
+Deletes audio file from both filesystem and database.
+
+```bash
+curl -X DELETE http://localhost:3000/api/files/audio/3d0211a3-74aa-4dda-bfa8-5682c5adb612 \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "message": "Audio file deleted"
+}
+```
+
+### `POST /api/process` - Process Audio with MAIE AI
+
+Audio uploaded for processing is automatically persisted to filesystem storage.
+
+**New Response Fields:**
+
+```json
+{
+  "taskId": "task-uuid",
+  "status": "processing",
+  "sourceAudioId": "3d0211a3-74aa-4dda-bfa8-5682c5adb612"
+}
+```
+
+The `sourceAudioId` links the processing task to the persisted audio file.
+
+### Migration Script
+
+For existing systems with audio stored in database:
+
+```bash
+# Preview migration
+bun run scripts/migrate-audio-to-filesystem.ts --dry-run
+
+# Run migration and clear DB blobs
+bun run scripts/migrate-audio-to-filesystem.ts --clear-blobs
+
+# Reclaim database space
+sqlite3 prisma/dev.db "VACUUM;"
+```
+
+---
+
+## Android Text Pair API (Updated November 2025)
+
+The `summary` field is now **optional** in the Android text pair endpoint. This allows uploading realtime-only data when summary is not available.
+
+### `POST /api/files/text-pair-android` - Updated
+
+**Minimal Request (realtime only):**
+
+```json
+{
+  "realtime": "2025-11-28 10:30:00 - Data captured...",
+  "deviceId": "device-uuid"
+}
+```
+
+**Response (201 Created):**
+
+```json
+{
+  "success": true,
+  "pair": {
+    "id": "pair-uuid",
+    "name": null,
+    "summaryFileId": null,
+    "realtimeFileId": "file-uuid",
+    "uploadedAt": "2025-11-28T10:30:00Z"
+  }
+}
+```
+
+**Full Request (with summary):**
+
+```json
+{
+  "summary": "System status report...",
+  "realtime": "2025-11-28 10:30:00 - Data captured...",
+  "deviceId": "device-uuid",
+  "deleteAfterDays": 30,
+  "pairName": "Analysis Report"
+}
+```
+
+**Notes:**
+
+- At least `realtime` field is required
+- `summary` is optional (soft deprecated for flexibility)
+- `summaryFileId` will be `null` when summary not provided

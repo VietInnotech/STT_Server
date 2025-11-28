@@ -20,27 +20,28 @@ Currently, when Android sends audio to `POST /api/process` (BFF proxy to MAIE):
 
 ## 2. Goals
 
-| # | Goal | Rationale |
-|---|------|-----------|
-| G1 | Auto-persist audio when `POST /api/process` is called | Single request simplifies Android client; ensures traceability. |
-| G2 | Link `ProcessingResult.sourceAudioId` → `AudioFile.id` automatically | Enables UI to display/download source audio alongside results. |
-| G3 | Respect storage quotas | Audio counts toward `UserSettings.storageQuotaBytes`. |
-| G4 | Apply separate retention policy for audio | Audio may need different retention than text files. |
-| G5 | Admin-configurable max file size | Flexibility for different deployment scenarios. |
-| G6 | Filesystem storage with streaming encryption | Avoid memory exhaustion and SQLite bloat for large files. |
+| #   | Goal                                                                 | Rationale                                                       |
+| --- | -------------------------------------------------------------------- | --------------------------------------------------------------- |
+| G1  | Auto-persist audio when `POST /api/process` is called                | Single request simplifies Android client; ensures traceability. |
+| G2  | Link `ProcessingResult.sourceAudioId` → `AudioFile.id` automatically | Enables UI to display/download source audio alongside results.  |
+| G3  | Respect storage quotas                                               | Audio counts toward `UserSettings.storageQuotaBytes`.           |
+| G4  | Apply separate retention policy for audio                            | Audio may need different retention than text files.             |
+| G5  | Admin-configurable max file size                                     | Flexibility for different deployment scenarios.                 |
+| G6  | Filesystem storage with streaming encryption                         | Avoid memory exhaustion and SQLite bloat for large files.       |
 
 ---
 
 ## 3. Design Decisions (Confirmed)
 
-| Decision | Value | Notes |
-|----------|-------|-------|
-| Max audio size | **Admin-configurable** via `SystemConfig` | Key: `system:maxAudioSizeBytes`. Default: 50 MB. |
-| Retention default | **Separate setting for audio** | New key: `system:audioAutoDeleteDays` (distinct from `system:autoDeleteDays` for text). User can override via `UserSettings.defaultAudioDeleteAfterDays`. |
-| Storage location | **Filesystem** | Encrypted files stored on disk; only metadata + file path in DB. Avoids SQLite bloat. |
-| Client opt-out? | **No** — audio is always persisted | Simplifies flow; privacy handled by retention policy. |
-| Quota enforcement | **Yes** | Reject with 413 if quota exceeded. |
-| Existing `sourceAudioId` | If provided, skip creating new `AudioFile` | Reuse existing logic from `/api/files/audio`. |
+| Decision                 | Value                                             | Notes                                                                                                                                                     |
+| ------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max audio size           | **Admin-configurable** via `SystemConfig`         | Key: `system:maxAudioSizeBytes`. Default: 50 MB.                                                                                                          |
+| Retention default        | **Separate setting for audio**                    | New key: `system:audioAutoDeleteDays` (distinct from `system:autoDeleteDays` for text). User can override via `UserSettings.defaultAudioDeleteAfterDays`. |
+| Storage location         | **Filesystem**                                    | Encrypted files stored on disk; only metadata + file path in DB. Avoids SQLite bloat.                                                                     |
+| Client opt-out?          | **No** — audio is always persisted                | Simplifies flow; privacy handled by retention policy.                                                                                                     |
+| Quota enforcement        | **Yes**                                           | Reject with 413 if quota exceeded.                                                                                                                        |
+| Existing `sourceAudioId` | If provided, skip creating new `AudioFile`        | Reuse existing logic from `/api/files/audio`.                                                                                                             |
+| Android summary policy   | **Not allowed** — Android must not send a summary | Enforce that Android uploads realtime only; client summaries are disallowed on the Android endpoint and should be created via the web UI if needed.       |
 
 ---
 
@@ -85,7 +86,7 @@ Currently, when Android sends audio to `POST /api/process` (BFF proxy to MAIE):
 /data/audio/                      # Base directory (configurable via env AUDIO_STORAGE_PATH)
   ├── {userId}/                   # Per-user subdirectory
   │   ├── {audioFileId}.enc       # Encrypted audio file
-  │   └── {audioFileId}.enc       
+  │   └── {audioFileId}.enc
   └── ...
 ```
 
@@ -101,10 +102,10 @@ Currently, when Android sends audio to `POST /api/process` (BFF proxy to MAIE):
 ```prisma
 model AudioFile {
   // ... existing fields ...
-  
+
   encryptedData Bytes?   // DEPRECATED: Now optional, used for migration only
   filePath      String?  // NEW: Relative path to encrypted file on disk
-  
+
   // ... rest unchanged ...
 }
 ```
@@ -114,34 +115,34 @@ model AudioFile {
 ```prisma
 model UserSettings {
   // ... existing fields ...
-  
+
   defaultDeleteAfterDays      Int?  // For TEXT files (rename semantically)
   defaultAudioDeleteAfterDays Int?  // NEW: For AUDIO files
-  
+
   // ... rest unchanged ...
 }
 ```
 
 **SystemConfig keys** (seeded or created on first use):
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `system:maxAudioSizeBytes` | integer | `52428800` (50 MB) | Max audio upload size in bytes |
-| `system:audioAutoDeleteDays` | integer | `90` | Default retention for audio files |
-| `system:autoDeleteDays` | integer | `30` | Default retention for text files (existing) |
+| Key                          | Type    | Default            | Description                                 |
+| ---------------------------- | ------- | ------------------ | ------------------------------------------- |
+| `system:maxAudioSizeBytes`   | integer | `52428800` (50 MB) | Max audio upload size in bytes              |
+| `system:audioAutoDeleteDays` | integer | `90`               | Default retention for audio files           |
+| `system:autoDeleteDays`      | integer | `30`               | Default retention for text files (existing) |
 
 ### 4.4 New/Modified Fields
 
 **Request body / multipart fields**:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `file` | binary | Yes | Audio file (max size from `system:maxAudioSizeBytes`) |
-| `template_id` | string | No | MAIE template ID |
-| `features` | string | No | Features to request (default `"summary"`) |
-| `sourceAudioId` | string | No | Link to existing `AudioFile` instead of creating new |
-| `deleteAfterDays` | integer | No | Retention period (overrides user/system default) |
-| `deviceId` | string | No | Android device identifier |
+| Field             | Type    | Required | Description                                           |
+| ----------------- | ------- | -------- | ----------------------------------------------------- |
+| `file`            | binary  | Yes      | Audio file (max size from `system:maxAudioSizeBytes`) |
+| `template_id`     | string  | No       | MAIE template ID                                      |
+| `features`        | string  | No       | Features to request (default `"summary"`)             |
+| `sourceAudioId`   | string  | No       | Link to existing `AudioFile` instead of creating new  |
+| `deleteAfterDays` | integer | No       | Retention period (overrides user/system default)      |
+| `deviceId`        | string  | No       | Android device identifier                             |
 
 **Removed**: `persistAudio` — audio is always persisted.
 
@@ -151,7 +152,7 @@ New service for filesystem-based audio storage:
 
 ```ts
 // Environment variable for storage path
-const AUDIO_STORAGE_PATH = process.env.AUDIO_STORAGE_PATH || './data/audio';
+const AUDIO_STORAGE_PATH = process.env.AUDIO_STORAGE_PATH || "./data/audio";
 
 interface SaveAudioOptions {
   userId: string;
@@ -165,14 +166,18 @@ interface SaveAudioOptions {
 
 interface SaveAudioResult {
   audioFileId: string;
-  filePath: string;  // Relative path
+  filePath: string; // Relative path
 }
 
-export async function saveAudioToFilesystem(opts: SaveAudioOptions): Promise<SaveAudioResult>;
-export async function getAudioFilePath(audioFileId: string): Promise<string>;  // Full absolute path
+export async function saveAudioToFilesystem(
+  opts: SaveAudioOptions
+): Promise<SaveAudioResult>;
+export async function getAudioFilePath(audioFileId: string): Promise<string>; // Full absolute path
 export async function deleteAudioFile(audioFileId: string): Promise<void>;
-export async function getMaxAudioSizeBytes(): Promise<number>;  // From SystemConfig
-export async function getDefaultAudioRetentionDays(userId: string): Promise<number | null>;
+export async function getMaxAudioSizeBytes(): Promise<number>; // From SystemConfig
+export async function getDefaultAudioRetentionDays(
+  userId: string
+): Promise<number | null>;
 ```
 
 ### 4.6 Temp File Handling
@@ -180,9 +185,9 @@ export async function getDefaultAudioRetentionDays(userId: string): Promise<numb
 Use Node.js `fs.createWriteStream` + `crypto.randomUUID()` for temp filename:
 
 ```ts
-import os from 'os';
-import path from 'path';
-import fs from 'fs';
+import os from "os";
+import path from "path";
+import fs from "fs";
 
 const tempDir = os.tmpdir();
 const tempFilePath = path.join(tempDir, `upload-${crypto.randomUUID()}.tmp`);
@@ -196,6 +201,7 @@ fs.unlink(tempFilePath, () => {});
 ```
 
 **Best practice references**:
+
 - [Express Multer DiskStorage](https://expressjs.com/en/resources/middleware/multer.html) — disk storage avoids memory issues.
 - [Busboy streaming to disk](https://spin.atomicobject.com/busboy-express-middleware/) — pipe directly to file.
 - [Node.js Streams](https://nodejs.org/api/stream.html) — backpressure handling.
@@ -205,25 +211,26 @@ fs.unlink(tempFilePath, () => {});
 Since we're storing on filesystem, use **streaming encryption** to avoid loading entire file into memory:
 
 ```ts
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
-import { createReadStream, createWriteStream } from 'fs';
-import { pipeline } from 'stream/promises';
+import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { createReadStream, createWriteStream } from "fs";
+import { pipeline } from "stream/promises";
 
 export async function encryptFileToPath(
-  inputPath: string, 
+  inputPath: string,
   outputPath: string
-): Promise<string> {  // Returns IV as hex string
+): Promise<string> {
+  // Returns IV as hex string
   const iv = randomBytes(16);
-  const key = getEncryptionKey();  // From existing encryption.ts
-  const cipher = createCipheriv('aes-256-cbc', key, iv);
-  
+  const key = getEncryptionKey(); // From existing encryption.ts
+  const cipher = createCipheriv("aes-256-cbc", key, iv);
+
   await pipeline(
     createReadStream(inputPath),
     cipher,
     createWriteStream(outputPath)
   );
-  
-  return iv.toString('hex');
+
+  return iv.toString("hex");
 }
 
 export async function decryptFileToStream(
@@ -231,8 +238,8 @@ export async function decryptFileToStream(
   iv: string
 ): Promise<Readable> {
   const key = getEncryptionKey();
-  const decipher = createDecipheriv('aes-256-cbc', key, Buffer.from(iv, 'hex'));
-  
+  const decipher = createDecipheriv("aes-256-cbc", key, Buffer.from(iv, "hex"));
+
   return createReadStream(encryptedPath).pipe(decipher);
 }
 ```
@@ -245,14 +252,14 @@ export async function decryptFileToStream(
 
 **Request** (multipart/form-data):
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `file` | binary | Yes | Audio file (max from `system:maxAudioSizeBytes`) |
-| `template_id` | string | No | MAIE template ID |
-| `features` | string | No | Features to request (default `"summary"`) |
-| `sourceAudioId` | string | No | Link to existing `AudioFile` instead of creating new |
-| `deleteAfterDays` | integer | No | Retention period |
-| `deviceId` | string | No | Android device identifier |
+| Field             | Type    | Required | Description                                          |
+| ----------------- | ------- | -------- | ---------------------------------------------------- |
+| `file`            | binary  | Yes      | Audio file (max from `system:maxAudioSizeBytes`)     |
+| `template_id`     | string  | No       | MAIE template ID                                     |
+| `features`        | string  | No       | Features to request (default `"summary"`)            |
+| `sourceAudioId`   | string  | No       | Link to existing `AudioFile` instead of creating new |
+| `deleteAfterDays` | integer | No       | Retention period                                     |
+| `deviceId`        | string  | No       | Android device identifier                            |
 
 **Response** (202 Accepted):
 
@@ -268,13 +275,13 @@ export async function decryptFileToStream(
 
 **Error responses**:
 
-| Code | Condition |
-|------|-----------|
-| 400 | No audio file provided |
-| 400 | Invalid `sourceAudioId` (not found) |
-| 413 | File exceeds `system:maxAudioSizeBytes` |
-| 413 | Storage quota exceeded |
-| 502 | MAIE unavailable |
+| Code | Condition                               |
+| ---- | --------------------------------------- |
+| 400  | No audio file provided                  |
+| 400  | Invalid `sourceAudioId` (not found)     |
+| 413  | File exceeds `system:maxAudioSizeBytes` |
+| 413  | Storage quota exceeded                  |
+| 502  | MAIE unavailable                        |
 
 ### `GET /api/files/audio/:id` (Updated)
 
@@ -301,17 +308,54 @@ if (audioFile.filePath) {
 
 Also migrated to filesystem storage (same pattern as `/api/process`).
 
+### `POST /api/files/text-pair-android` (Android-only)
+
+Android clients should only upload **realtime** (live transcript) text via this JSON endpoint. The server will reject any requests that include a `summary` field — web UI remains the place to upload or edit summary text files.
+
+Request (application/json):
+
+| Field             | Type    | Required | Description                                      |
+| ----------------- | ------- | -------- | ------------------------------------------------ |
+| `realtime`        | string  | Yes      | Real-time (live) transcript text content (UTF-8) |
+| `deviceId`        | string  | No       | Android device identifier                        |
+| `deleteAfterDays` | integer | No       | Retention override for files (in days)           |
+| `pairName`        | string  | No       | Optional name for the pair                       |
+| `clientUploadId`  | string  | No       | Client-supplied idempotency key                  |
+
+Response (201 Created):
+
+```json
+{
+  "success": true,
+  "pair": {
+    "id": "uuid",
+    "realtimeFileId": "uuid",
+    "uploadedAt": "2025-11-28T..."
+  }
+}
+```
+
+Errors:
+
+- 400: Missing `realtime` or if a `summary` field is present in the JSON
+- 413: Storage quota exceeded
+- 401: Unauthorized
+
+Notes:
+
+- Web UI `POST /api/files/text-pair` continues to support summary file uploads. Android is explicitly restricted to realtime for consistent data lineage.
+
 ---
 
 ## 6. Admin Settings API
 
 ### New SystemConfig Keys
 
-| Key | Type | Default | Admin UI Label |
-|-----|------|---------|----------------|
-| `system:maxAudioSizeBytes` | integer | `52428800` | "Max Audio Upload Size (bytes)" |
-| `system:audioAutoDeleteDays` | integer | `90` | "Audio Auto-Delete (days)" |
-| `system:autoDeleteDays` | integer | `30` | "Text Auto-Delete (days)" |
+| Key                          | Type    | Default    | Admin UI Label                  |
+| ---------------------------- | ------- | ---------- | ------------------------------- |
+| `system:maxAudioSizeBytes`   | integer | `52428800` | "Max Audio Upload Size (bytes)" |
+| `system:audioAutoDeleteDays` | integer | `90`       | "Audio Auto-Delete (days)"      |
+| `system:autoDeleteDays`      | integer | `30`       | "Text Auto-Delete (days)"       |
 
 **Admin can update via existing** `PUT /api/admin/settings` endpoint (or add specific endpoint if needed).
 
@@ -320,6 +364,7 @@ Also migrated to filesystem storage (same pattern as `/api/process`).
 ## 7. Swagger Updates
 
 Update `src/config/swagger.ts` to document:
+
 - New `sourceAudioId`, `deleteAfterDays`, `deviceId` fields on `/api/process`.
 - New `audioFileId` in response.
 - 413 errors for size limit and quota exceeded.
@@ -342,12 +387,14 @@ ALTER TABLE user_settings ADD COLUMN defaultAudioDeleteAfterDays INTEGER;
 
 -- Seed system config (idempotent)
 INSERT OR IGNORE INTO system_config (id, key, value, description, updatedAt)
-VALUES 
+VALUES
   (lower(hex(randomblob(16))), 'system:maxAudioSizeBytes', '52428800', 'Max audio upload size in bytes', datetime('now')),
   (lower(hex(randomblob(16))), 'system:audioAutoDeleteDays', '90', 'Default audio retention in days', datetime('now'));
 ```
 
 **Backward compatibility**: Existing `AudioFile` records with `encryptedData` continue to work; new uploads use `filePath`.
+
+**Android summary deprecation**: Existing `TextFile` records that contain `androidSummary` or `androidRealtime` will remain unchanged and accessible. New Android uploads will **not** be allowed to include a `summary` field; the server will reject such requests. If desired, a migration step can be added to migrate `androidSummary` fields into archival columns and mark them as legacy.
 
 ---
 
@@ -409,14 +456,24 @@ VALUES
   - Upload exceeding quota → verify 413.
   - Download audio → verify streaming decryption works.
   - Delete audio → verify file removed from disk.
+  - POST `/api/files/text-pair-android` with a `summary` field present → verify server returns 400 and error instructing to not send a summary from Android.
+  - POST `/api/files/text-pair-android` with `realtime` only → verify creation of TextFilePair and display in UI; confirm side-by-side comparison with MAIE transcript after processing.
 - [ ] **F2**: Test legacy DB audio still downloads correctly.
 - [ ] **F3**: (Optional) Integration tests.
+
+### Phase G: Android Text Pair Endpoint (Estimated: 1 hour)
+
+- [ ] **G1**: Update `POST /api/files/text-pair-android` validation to require `realtime` (reject requests that include a `summary` field with 400).
+- [ ] **G2**: Add `clientUploadId` (Idempotency-Key) support and dedupe.
+- [ ] **G3**: Update Swagger docs and `CLIENT_DEVELOPER_GUIDE.md` to explicitly instruct Android to not send a `summary`.
+- [ ] **G4**: Add tests for `summary` rejection, idempotency, and success path.
 
 ---
 
 ## 10. Rollback Plan
 
 If issues arise:
+
 1. Revert code changes to `src/routes/process.ts` and `src/routes/files.ts`.
 2. Orphan files on disk can be cleaned up via script comparing DB records to filesystem.
 3. Migration adds nullable columns; no data loss on rollback.
@@ -429,6 +486,7 @@ If issues arise:
 ### 11.1 Current Gap
 
 **Problem**: There is currently **no link** between:
+
 - `TextFilePair` (contains realtime/live transcript from Android)
 - `ProcessingResult` (contains MAIE transcript + summary)
 
@@ -447,11 +505,11 @@ Add optional `sourceTextFilePairId` to `ProcessingResult`:
 ```prisma
 model ProcessingResult {
   // ... existing fields ...
-  
+
   sourceAudioId       String?      // Links to source audio
   sourceTextFilePairId String?     // NEW: Links to TextFilePair with live transcript
   sourceTextFilePair  TextFilePair? @relation(fields: [sourceTextFilePairId], references: [id], onDelete: SetNull)
-  
+
   // ... rest unchanged ...
 }
 
@@ -466,7 +524,7 @@ model TextFilePair {
 **Option A: Android provides `sourceTextFilePairId` during process**
 
 ```
-1. Android creates TextFilePair via POST /api/files/text-pair-android (gets pairId)
+1. Android creates TextFilePair via POST /api/files/text-pair-android (gets pairId). NOTE: This endpoint accepts **realtime only**; sending a `summary` field will cause the request to be rejected.
 2. Android calls POST /api/process with sourceTextFilePairId=pairId
 3. Server links ProcessingResult to TextFilePair
 ```
@@ -474,6 +532,18 @@ model TextFilePair {
 **Option B: Server auto-links based on context (more complex)**
 
 Not recommended — requires heuristics to match pairs.
+
+### Recommended Android Flow (explicit)
+
+Use this flow in the Android app to ensure consistent, auditable data lineage:
+
+1. Capture live transcript (realtime) during recording.
+2. POST `/api/files/text-pair-android` with `{ realtime, deviceId, clientUploadId }` only — do not include a summary.
+3. Receive `pairId` from the server.
+4. POST `/api/process` with audio file and `sourceTextFilePairId=pairId` to link audio processing to the live transcript pair.
+5. The server persists the realtime transcript (TextFilePair), persists the audio (AudioFile), submits audio to MAIE, and links the `ProcessingResult` to the `TextFilePair` via `sourceTextFilePairId`.
+
+Rationale: This flow ensures the UI and audit trail can show: Live transcript (as recorded on-device) → Audio → MAIE transcript & summary. It avoids the duplication or conflict of client-provided summaries.
 
 ### 11.4 Implementation Checklist for Linking
 
@@ -497,8 +567,8 @@ Not recommended — requires heuristics to match pairs.
 // Update ProcessingResultItem interface
 export interface ProcessingResultItem {
   // ... existing fields ...
-  sourceAudioId?: string;           // ADD: Link to audio file
-  sourceTextFilePairId?: string;    // ADD: Link to text file pair
+  sourceAudioId?: string; // ADD: Link to audio file
+  sourceTextFilePairId?: string; // ADD: Link to text file pair
 }
 ```
 
@@ -506,6 +576,7 @@ export interface ProcessingResultItem {
 
 - In detail modal, add audio player if `sourceAudioId` exists.
 - Add "View Live Transcript" link if `sourceTextFilePairId` exists.
+- Do not display client/device-provided summaries in MAIE comparison view for new uploads; only web UI summaries (from `POST /api/files/text-pair`) or MAIE summaries are shown. If legacy device summaries exist in historical data, mark them as deprecated and show them only under an "Legacy Device Summary" label.
 
 ### 12.2 Audio Playback Component
 
@@ -517,25 +588,25 @@ interface AudioPlayerProps {
 
 export function AudioPlayer({ audioFileId }: AudioPlayerProps) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  
+
   useEffect(() => {
     // Fetch audio blob via API and create object URL
     const fetchAudio = async () => {
       const response = await api.get(`/api/files/audio/${audioFileId}`, {
-        responseType: 'blob',
+        responseType: "blob",
       });
       const url = URL.createObjectURL(response.data);
       setAudioUrl(url);
     };
     fetchAudio();
-    
+
     return () => {
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
   }, [audioFileId]);
-  
+
   if (!audioUrl) return <div>Loading audio...</div>;
-  
+
   return (
     <audio controls src={audioUrl} className="w-full">
       Your browser does not support audio playback.
@@ -549,25 +620,33 @@ export function AudioPlayer({ audioFileId }: AudioPlayerProps) {
 In `ProcessingResultsTab.tsx` detail modal:
 
 ```tsx
-{/* Audio Player Section */}
-{selectedResult?.sourceAudioId && (
-  <div className="mt-4 border-t pt-4">
-    <h4 className="font-semibold mb-2">Source Audio</h4>
-    <AudioPlayer audioFileId={selectedResult.sourceAudioId} />
-  </div>
-)}
+{
+  /* Audio Player Section */
+}
+{
+  selectedResult?.sourceAudioId && (
+    <div className="mt-4 border-t pt-4">
+      <h4 className="font-semibold mb-2">Source Audio</h4>
+      <AudioPlayer audioFileId={selectedResult.sourceAudioId} />
+    </div>
+  );
+}
 
-{/* Link to Live Transcript */}
-{selectedResult?.sourceTextFilePairId && (
-  <div className="mt-4">
-    <Link 
-      to={`/files/pairs/${selectedResult.sourceTextFilePairId}`}
-      className="text-blue-600 hover:underline"
-    >
-      View Live Transcript (Text Pair)
-    </Link>
-  </div>
-)}
+{
+  /* Link to Live Transcript */
+}
+{
+  selectedResult?.sourceTextFilePairId && (
+    <div className="mt-4">
+      <Link
+        to={`/files/pairs/${selectedResult.sourceTextFilePairId}`}
+        className="text-blue-600 hover:underline"
+      >
+        View Live Transcript (Text Pair)
+      </Link>
+    </div>
+  );
+}
 ```
 
 ### 12.4 Backend Endpoint Update
@@ -576,14 +655,14 @@ In `ProcessingResultsTab.tsx` detail modal:
 
 ```ts
 // In src/routes/files.ts
-router.get('/results/:id', authenticate, async (req, res) => {
+router.get("/results/:id", authenticate, async (req, res) => {
   const result = await prisma.processingResult.findUnique({
     where: { id: req.params.id },
     select: {
       // ... existing fields ...
-      sourceAudioId: true,         // ADD
-      sourceTextFilePairId: true,  // ADD
-    }
+      sourceAudioId: true, // ADD
+      sourceTextFilePairId: true, // ADD
+    },
   });
   // ...
 });
@@ -617,6 +696,7 @@ router.get('/results/:id', authenticate, async (req, res) => {
 ```
 
 **Complete data chain**:
+
 - **Audio** → `AudioFile` → linked via `sourceAudioId`
 - **MAIE Transcript** → `ProcessingResult.transcriptData` (encrypted)
 - **MAIE Summary** → `ProcessingResult.summaryData` (encrypted)
@@ -627,13 +707,13 @@ router.get('/results/:id', authenticate, async (req, res) => {
 
 ## 14. Future Enhancements (Out of Scope)
 
-| Enhancement | Rationale |
-|-------------|-----------|
-| Background persistence | Persist audio async after MAIE submission to reduce latency. |
-| Chunked/resumable uploads | Support very long recordings with resumable uploads. |
-| Compression before encryption | Reduce storage for audio formats that compress well. |
-| Admin UI for storage management | Dashboard showing disk usage, orphan cleanup, etc. |
-| Side-by-side comparison view | Compare live transcript vs MAIE transcript in UI. |
+| Enhancement                     | Rationale                                                    |
+| ------------------------------- | ------------------------------------------------------------ |
+| Background persistence          | Persist audio async after MAIE submission to reduce latency. |
+| Chunked/resumable uploads       | Support very long recordings with resumable uploads.         |
+| Compression before encryption   | Reduce storage for audio formats that compress well.         |
+| Admin UI for storage management | Dashboard showing disk usage, orphan cleanup, etc.           |
+| Side-by-side comparison view    | Compare live transcript vs MAIE transcript in UI.            |
 
 ---
 
@@ -650,11 +730,11 @@ router.get('/results/:id', authenticate, async (req, res) => {
 
 ## 16. Sign-Off
 
-| Role | Name | Date | Approved |
-|------|------|------|----------|
-| Developer | | | ☐ |
-| Reviewer | | | ☐ |
+| Role      | Name | Date | Approved |
+| --------- | ---- | ---- | -------- |
+| Developer |      |      | ☐        |
+| Reviewer  |      |      | ☐        |
 
 ---
 
-*End of plan.*
+_End of plan._

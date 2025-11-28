@@ -16,6 +16,8 @@ import {
   XCircle,
   AlertCircle,
   X,
+  Mic,
+  FileAudio,
 } from "lucide-react";
 import { filesApi, type ProcessingResultItem, templatesApi } from "../lib/api";
 import { useSettingsStore } from "../stores/settings";
@@ -26,6 +28,110 @@ import toast from "react-hot-toast";
 import { usePermission } from "../hooks/usePermission";
 import { PERMISSIONS } from "../lib/permissions";
 import SearchFiltersPanel, { type SearchFilters } from "./SearchFiltersPanel";
+
+// Fields to skip when dynamically rendering summaryData (already shown elsewhere or internal)
+const SKIP_FIELDS = new Set(["title", "summary", "content"]);
+
+// Format field name for display: "key_topics" -> "Key Topics"
+function formatFieldName(key: string): string {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Render a single value (handles strings, arrays, objects)
+function renderValue(value: unknown): React.ReactNode {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "string") {
+    return <span>{value}</span>;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return <span>{String(value)}</span>;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+
+    // Check if all items are strings (render as list)
+    const allStrings = value.every((v) => typeof v === "string");
+    if (allStrings) {
+      return (
+        <ul className="list-disc list-inside space-y-1 text-gray-600">
+          {value.map((item, idx) => (
+            <li key={idx}>{item}</li>
+          ))}
+        </ul>
+      );
+    }
+
+    // Mixed or object array - render each item
+    return (
+      <ul className="space-y-2">
+        {value.map((item, idx) => (
+          <li key={idx} className="flex items-start gap-2 text-gray-600">
+            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-gray-400 flex-shrink-0"></span>
+            <span>
+              {typeof item === "string" ? item : JSON.stringify(item, null, 2)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (typeof value === "object") {
+    // Render nested object as formatted JSON
+    return (
+      <pre className="text-xs bg-gray-100 p-2 rounded overflow-auto">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    );
+  }
+
+  return <span>{String(value)}</span>;
+}
+
+// Dynamic component to render all fields from summaryData
+function SummaryDataSection({
+  data,
+  t,
+}: {
+  data: Record<string, unknown>;
+  t: (key: string, options?: Record<string, unknown>) => string;
+}) {
+  // Get all keys except the ones we skip
+  const fields = Object.entries(data).filter(
+    ([key, value]) =>
+      !SKIP_FIELDS.has(key) && value !== null && value !== undefined
+  );
+
+  if (fields.length === 0) return null;
+
+  return (
+    <>
+      {fields.map(([key, value]) => {
+        // Skip empty arrays
+        if (Array.isArray(value) && value.length === 0) return null;
+
+        // Try to get translated label, fallback to formatted key name
+        const translationKey = `results.${key.replace(/_([a-z])/g, (_, c) =>
+          c.toUpperCase()
+        )}`;
+        const label =
+          t(translationKey, { defaultValue: "" }) || formatFieldName(key);
+
+        return (
+          <div key={key} className="border-t border-gray-200 pt-4">
+            <h4 className="text-sm font-semibold text-gray-800 mb-2">
+              {label}
+            </h4>
+            {renderValue(value)}
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 export default function ProcessingResultsTab() {
   const { t } = useTranslation("files");
@@ -41,9 +147,26 @@ export default function ProcessingResultsTab() {
     useState<ProcessingResultItem | null>(null);
   const [resultContent, setResultContent] = useState<{
     summary: string | null;
+    summaryData: {
+      title?: string;
+      summary?: string;
+      content?: string;
+      attendees?: string[];
+      decisions?: string[];
+      action_items?: string[];
+      key_topics?: string[];
+      tags?: string[];
+      [key: string]: unknown;
+    } | null;
     transcript: string | null;
+    liveTranscript: string | null;
+    liveTranscriptPairId: string | null;
+    sourceAudioId: string | null;
   } | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
+  const [activeTab, setActiveTab] = useState<
+    "summary" | "transcript" | "liveTranscript"
+  >("summary");
 
   // Filter state with enhanced filters
   const [filters, setFilters] = useState<SearchFilters>({
@@ -54,7 +177,7 @@ export default function ProcessingResultsTab() {
     toDate: "",
     minConfidence: null,
     maxConfidence: null,
-    status: "completed",
+    status: "all",
     sortBy: "date",
     order: "desc",
   });
@@ -146,11 +269,16 @@ export default function ProcessingResultsTab() {
     setViewingResult(result);
     setLoadingContent(true);
     setResultContent(null);
+    setActiveTab("summary"); // Reset to summary tab
     try {
       const res = await filesApi.getResult(result.id);
       setResultContent({
         summary: res.data.result?.summary || null,
+        summaryData: res.data.result?.summaryData || null,
         transcript: res.data.result?.transcript || null,
+        liveTranscript: res.data.result?.liveTranscript || null,
+        liveTranscriptPairId: res.data.result?.liveTranscriptPairId || null,
+        sourceAudioId: res.data.result?.sourceAudioId || null,
       });
     } catch (err) {
       console.error("Failed to fetch result content", err);
@@ -181,7 +309,7 @@ export default function ProcessingResultsTab() {
     filters.toDate ||
     filters.minConfidence !== null ||
     filters.maxConfidence !== null ||
-    filters.status !== "completed";
+    filters.status !== "all";
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -352,13 +480,11 @@ export default function ProcessingResultsTab() {
               </button>
             </span>
           )}
-          {filters.status !== "completed" && (
+          {filters.status !== "all" && (
             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
               {t(`results.${filters.status}`)}
               <button
-                onClick={() =>
-                  setFilters((f) => ({ ...f, status: "completed" }))
-                }
+                onClick={() => setFilters((f) => ({ ...f, status: "all" }))}
                 className="ml-1 hover:text-gray-600"
               >
                 <X className="h-3 w-3" />
@@ -622,26 +748,102 @@ export default function ProcessingResultsTab() {
                 <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-0">
-                {/* Summary */}
-                <div className="flex flex-col">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-2">
-                    {t("summary")}
-                  </h4>
-                  <div className="flex-1 bg-gray-50 rounded-lg p-4 overflow-auto text-sm text-gray-700 whitespace-pre-wrap">
-                    {resultContent?.summary || t("noContent")}
-                  </div>
+              <div className="flex flex-col flex-1 min-h-0">
+                {/* Tabs */}
+                <div className="flex border-b border-gray-200 mb-4">
+                  <button
+                    onClick={() => setActiveTab("summary")}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === "summary"
+                        ? "border-blue-500 text-blue-600"
+                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      {t("summary")}
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("transcript")}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === "transcript"
+                        ? "border-blue-500 text-blue-600"
+                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <FileAudio className="h-4 w-4" />
+                      {t("results.transcript")}
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("liveTranscript")}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === "liveTranscript"
+                        ? "border-blue-500 text-blue-600"
+                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                    } ${!resultContent?.liveTranscript ? "opacity-50" : ""}`}
+                    disabled={!resultContent?.liveTranscript}
+                    title={
+                      !resultContent?.liveTranscript
+                        ? t("results.noLiveTranscript")
+                        : ""
+                    }
+                  >
+                    <div className="flex items-center gap-2">
+                      <Mic className="h-4 w-4" />
+                      {t("results.liveTranscript")}
+                      {resultContent?.liveTranscript && (
+                        <span className="ml-1 w-2 h-2 bg-green-500 rounded-full"></span>
+                      )}
+                    </div>
+                  </button>
                 </div>
 
-                {/* Transcript */}
-                <div className="flex flex-col">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-2">
-                    {t("results.transcript")}
-                  </h4>
-                  <div className="flex-1 bg-gray-50 rounded-lg p-4 overflow-auto text-sm text-gray-700 whitespace-pre-wrap">
-                    {resultContent?.transcript || t("results.noTranscript")}
-                  </div>
+                {/* Tab Content */}
+                <div className="flex-1 bg-gray-50 rounded-lg p-4 overflow-auto text-sm text-gray-700">
+                  {activeTab === "summary" && (
+                    <div className="space-y-6">
+                      {/* Main Summary Text */}
+                      <div className="whitespace-pre-wrap">
+                        {resultContent?.summary || t("noContent")}
+                      </div>
+
+                      {/* Dynamic fields from summaryData */}
+                      {resultContent?.summaryData && (
+                        <SummaryDataSection
+                          data={resultContent.summaryData}
+                          t={t}
+                        />
+                      )}
+                    </div>
+                  )}
+                  {activeTab === "transcript" && (
+                    <div className="whitespace-pre-wrap">
+                      {resultContent?.transcript || t("results.noTranscript")}
+                    </div>
+                  )}
+                  {activeTab === "liveTranscript" && (
+                    <div className="whitespace-pre-wrap">
+                      {resultContent?.liveTranscript ||
+                        t("results.noLiveTranscript")}
+                    </div>
+                  )}
                 </div>
+
+                {/* Source Audio Link */}
+                {resultContent?.sourceAudioId && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                      <FileAudio className="h-4 w-4" />
+                      <span>{t("results.sourceAudio")}:</span>
+                      <code className="text-xs bg-gray-100 px-2 py-0.5 rounded">
+                        {resultContent.sourceAudioId}
+                      </code>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

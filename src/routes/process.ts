@@ -1,6 +1,10 @@
 import { Router } from "express";
 import busboy from "busboy";
 import crypto from "crypto";
+import { createWriteStream } from "fs";
+import { unlink } from "fs/promises";
+import path from "path";
+import os from "os";
 import { Readable } from "stream";
 import { prisma } from "../lib/prisma";
 import { authenticate, type AuthRequest } from "../middleware/auth";
@@ -15,6 +19,17 @@ import {
 import logger from "../lib/logger";
 import { emitToUser } from "../lib/socketBus";
 import { encrypt } from "../utils/encryption";
+import {
+  saveAudioToFilesystem,
+  getMaxAudioSizeBytes,
+  getDefaultAudioRetentionDays,
+  getAudioBuffer,
+  cleanupTempFile,
+} from "../services/audioStorageService";
+import {
+  checkStorageQuota,
+  updateUserStorageUsage,
+} from "../services/storageService";
 
 const router = Router();
 
@@ -95,22 +110,59 @@ async function logProcessingAudit(
 /**
  * POST /api/process
  *
- * Submit audio for AI processing (MAIE proxy)
+ * Submit audio for AI processing (MAIE proxy) with automatic audio persistence.
  *
- * ⚠️ TRANSACTION SAFETY PATTERN:
- * 1. Create DB record as PENDING first (with internal UUID)
- * 2. Stream to MAIE
- * 3. Update DB record with MAIE task_id (or mark failed)
+ * New flow with audio persistence:
+ * 1. Create PENDING ProcessingResult
+ * 2. Stream audio to temp file while parsing multipart fields
+ * 3. Validate file size against admin-configured limit
+ * 4. Check storage quota
+ * 5. Either use existing sourceAudioId or persist audio to filesystem
+ * 6. Submit audio to MAIE
+ * 7. Update ProcessingResult with maieTaskId and sourceAudioId
+ * 8. Clean up temp file
  *
- * This ensures we have a record even if the connection drops.
+ * Request fields:
+ * - file: Audio file (required unless sourceAudioId provided)
+ * - template_id: MAIE template ID (optional)
+ * - features: Features to request, default "summary" (optional)
+ * - sourceAudioId: Link to existing AudioFile instead of creating new (optional)
+ * - sourceTextFilePairId: Link to TextFilePair for live transcript comparison (optional)
+ * - deleteAfterDays: Retention period override (optional)
+ * - deviceId: Android device identifier (optional)
  */
 router.post("/", authenticate, uploadLimiter, async (req: AuthRequest, res) => {
   const userId = req.user!.userId;
-
-  // Generate internal task ID (never expose MAIE's task_id to clients)
   const internalTaskId = crypto.randomUUID();
 
-  // Step 1: Create PENDING record BEFORE calling MAIE
+  // Temp file path for streaming upload
+  let tempFilePath: string | null = null;
+  let responseSent = false;
+
+  // Helper to send response only once
+  const sendResponse = (status: number, body: object) => {
+    if (!responseSent) {
+      responseSent = true;
+      res.status(status).json(body);
+    }
+  };
+
+  // Helper to cleanup and send error
+  const handleError = async (
+    status: number,
+    error: string,
+    taskId?: string
+  ) => {
+    if (tempFilePath) {
+      await cleanupTempFile(tempFilePath);
+    }
+    if (taskId) {
+      prisma.processingResult.delete({ where: { id: taskId } }).catch(() => {});
+    }
+    sendResponse(status, { error, taskId });
+  };
+
+  // Step 1: Create PENDING record
   let processingResult;
   try {
     processingResult = await prisma.processingResult.create({
@@ -118,7 +170,6 @@ router.post("/", authenticate, uploadLimiter, async (req: AuthRequest, res) => {
         id: internalTaskId,
         status: "pending",
         uploadedById: userId,
-        // maieTaskId will be set after MAIE responds
       },
     });
     logger.info("Created pending processing result", {
@@ -127,83 +178,291 @@ router.post("/", authenticate, uploadLimiter, async (req: AuthRequest, res) => {
     });
   } catch (dbError) {
     logger.error("Failed to create processing result", { error: dbError });
-    res.status(500).json({ error: "Failed to initiate processing" });
+    sendResponse(500, { error: "Failed to initiate processing" });
     return;
   }
 
-  // Parse multipart form data
-  // ⚠️ We need to buffer the file because fields may arrive AFTER the file
-  // in the multipart stream (order depends on client), and we need template_id
-  // before calling MAIE
-  const bb = busboy({ headers: req.headers });
+  // Get max file size limit
+  const maxAudioSize = await getMaxAudioSizeBytes();
 
+  // Parse multipart form data with streaming to temp file
+  // defParamCharset: 'utf8' ensures proper handling of Vietnamese/non-ASCII filenames
+  const bb = busboy({
+    headers: req.headers,
+    limits: { fileSize: maxAudioSize },
+    defParamCharset: "utf8",
+  });
+
+  // Form field values
   let templateId: string | undefined;
   let features = "summary";
-  let fileInfo: { filename: string; mimeType: string; data: Buffer } | null =
+  let sourceAudioId: string | undefined;
+  let sourceTextFilePairId: string | undefined;
+  let deleteAfterDays: number | undefined;
+  let deviceId: string | undefined;
+
+  // File info
+  let fileInfo: { filename: string; mimeType: string; size: number } | null =
     null;
-  let responseSent = false;
+  let fileTruncated = false;
 
   bb.on("field", (name, val) => {
     logger.debug("Received field", { name, val });
-    if (name === "template_id") templateId = val;
-    if (name === "features") features = val;
+    switch (name) {
+      case "template_id":
+        templateId = val;
+        break;
+      case "features":
+        features = val;
+        break;
+      case "sourceAudioId":
+        sourceAudioId = val;
+        break;
+      case "sourceTextFilePairId":
+        sourceTextFilePairId = val;
+        break;
+      case "deleteAfterDays":
+        const parsed = parseInt(val, 10);
+        if (!isNaN(parsed)) deleteAfterDays = parsed;
+        break;
+      case "deviceId":
+        deviceId = val;
+        break;
+    }
   });
 
   bb.on("file", (name, file, info) => {
     const { filename, mimeType } = info;
-    const chunks: Buffer[] = [];
 
-    logger.info("Receiving file for processing", {
+    // Generate temp file path
+    tempFilePath = path.join(os.tmpdir(), `upload-${crypto.randomUUID()}.tmp`);
+    const writeStream = createWriteStream(tempFilePath);
+    let bytesWritten = 0;
+
+    logger.info("Streaming file to temp", {
       taskId: internalTaskId,
       filename,
       mimeType,
+      tempFilePath,
     });
 
-    file.on("data", (chunk) => {
-      chunks.push(chunk);
+    file.on("data", (chunk: Buffer) => {
+      bytesWritten += chunk.length;
+      writeStream.write(chunk);
+    });
+
+    file.on("limit", () => {
+      fileTruncated = true;
+      logger.warn("File exceeded size limit", {
+        taskId: internalTaskId,
+        maxAudioSize,
+        bytesWritten,
+      });
     });
 
     file.on("end", () => {
-      fileInfo = {
-        filename,
-        mimeType,
-        data: Buffer.concat(chunks),
-      };
-      logger.info("File received completely", {
+      writeStream.end();
+      fileInfo = { filename, mimeType, size: bytesWritten };
+      logger.info("File streamed to temp", {
         taskId: internalTaskId,
         filename,
-        size: fileInfo.data.length,
+        size: bytesWritten,
       });
+    });
+
+    file.on("error", (err) => {
+      writeStream.destroy();
+      logger.error("File stream error", { err, taskId: internalTaskId });
     });
   });
 
   bb.on("close", async () => {
-    // All fields and file have been parsed - now we can process
-    if (!fileInfo) {
-      // Clean up orphan record
-      prisma.processingResult
-        .delete({ where: { id: internalTaskId } })
-        .catch(() => {});
-      if (!responseSent) {
-        responseSent = true;
-        res.status(400).json({ error: "No audio file provided" });
-      }
+    // Check if file was truncated due to size limit
+    if (fileTruncated) {
+      await handleError(
+        413,
+        `File exceeds maximum size of ${Math.round(
+          maxAudioSize / 1024 / 1024
+        )}MB`,
+        internalTaskId
+      );
       return;
     }
 
-    logger.info("Form parsing complete, submitting to MAIE", {
-      taskId: internalTaskId,
-      templateId,
-      features,
-      filename: fileInfo.filename,
-      fileSize: fileInfo.data.length,
-    });
+    // If sourceAudioId provided, we don't need a file upload
+    if (sourceAudioId) {
+      // Validate sourceAudioId exists and belongs to user
+      const existingAudio = await prisma.audioFile.findFirst({
+        where: { id: sourceAudioId, uploadedById: userId },
+      });
+
+      if (!existingAudio) {
+        await handleError(
+          400,
+          "Invalid sourceAudioId: audio file not found or not owned by user",
+          internalTaskId
+        );
+        return;
+      }
+
+      // Use existing audio - get buffer for MAIE
+      try {
+        const {
+          buffer: audioBuffer,
+          filename,
+          mimeType,
+        } = await getAudioBuffer(sourceAudioId);
+
+        // Validate sourceTextFilePairId if provided
+        if (sourceTextFilePairId) {
+          const existingPair = await prisma.textFilePair.findFirst({
+            where: { id: sourceTextFilePairId, uploadedById: userId },
+          });
+          if (!existingPair) {
+            await handleError(
+              400,
+              "Invalid sourceTextFilePairId: pair not found or not owned by user",
+              internalTaskId
+            );
+            return;
+          }
+        }
+
+        // Submit to MAIE
+        const fileStream = Readable.from(audioBuffer);
+        const maieResponse = await submitToMaie(
+          fileStream,
+          filename,
+          templateId,
+          features
+        );
+
+        // Update ProcessingResult with links
+        await prisma.processingResult.update({
+          where: { id: internalTaskId },
+          data: {
+            maieTaskId: maieResponse.task_id,
+            maieStatus: maieResponse.status,
+            templateId,
+            sourceAudioId,
+            sourceTextFilePairId: sourceTextFilePairId || null,
+          },
+        });
+
+        logger.info("Processing submitted with existing audio", {
+          internalTaskId,
+          maieTaskId: maieResponse.task_id,
+          sourceAudioId,
+          userId,
+        });
+
+        await logProcessingAudit(
+          userId,
+          "process_audio_submitted",
+          internalTaskId,
+          {
+            sourceAudioId,
+            sourceTextFilePairId,
+            templateId,
+            features,
+            reusedExistingAudio: true,
+          },
+          req
+        );
+
+        sendResponse(202, {
+          success: true,
+          taskId: internalTaskId,
+          status: "PENDING",
+          message: "Processing started",
+          audioFileId: sourceAudioId,
+        });
+        return;
+      } catch (err) {
+        logger.error("Failed to process with existing audio", {
+          err,
+          sourceAudioId,
+        });
+        await handleError(
+          500,
+          "Failed to read existing audio file",
+          internalTaskId
+        );
+        return;
+      }
+    }
+
+    // No sourceAudioId - require uploaded file
+    if (!fileInfo || !tempFilePath) {
+      await handleError(400, "No audio file provided", internalTaskId);
+      return;
+    }
+
+    // Check storage quota
+    const quotaCheck = await checkStorageQuota(userId, fileInfo.size);
+    if (!quotaCheck.allowed) {
+      await handleError(
+        413,
+        quotaCheck.reason || "Storage quota exceeded",
+        internalTaskId
+      );
+      return;
+    }
+
+    // Validate sourceTextFilePairId if provided
+    if (sourceTextFilePairId) {
+      const existingPair = await prisma.textFilePair.findFirst({
+        where: { id: sourceTextFilePairId, uploadedById: userId },
+      });
+      if (!existingPair) {
+        await handleError(
+          400,
+          "Invalid sourceTextFilePairId: pair not found or not owned by user",
+          internalTaskId
+        );
+        return;
+      }
+    }
+
+    // Resolve deviceId
+    let resolvedDeviceId: string | null = null;
+    if (deviceId) {
+      const deviceById = await prisma.device
+        .findUnique({ where: { id: deviceId } })
+        .catch(() => null);
+      if (deviceById) {
+        resolvedDeviceId = deviceById.id;
+      } else {
+        const deviceByDeviceId = await prisma.device
+          .findFirst({ where: { deviceId } })
+          .catch(() => null);
+        resolvedDeviceId = deviceByDeviceId?.id ?? null;
+      }
+    }
 
     try {
-      // Convert buffer to readable stream for submitToMaie
-      const fileStream = Readable.from(fileInfo.data);
+      // Save audio to filesystem
+      const { audioFileId, filePath } = await saveAudioToFilesystem({
+        userId,
+        tempFilePath,
+        filename: fileInfo.filename,
+        mimeType: fileInfo.mimeType,
+        fileSize: fileInfo.size,
+        deviceId: resolvedDeviceId,
+        deleteAfterDays,
+      });
 
-      // Step 2: Submit to MAIE with all fields available
+      logger.info("Audio persisted to filesystem", {
+        audioFileId,
+        filePath,
+        taskId: internalTaskId,
+      });
+
+      // Get audio buffer for MAIE submission
+      const { buffer: audioBuffer } = await getAudioBuffer(audioFileId);
+      const fileStream = Readable.from(audioBuffer);
+
+      // Submit to MAIE
       const maieResponse = await submitToMaie(
         fileStream,
         fileInfo.filename,
@@ -211,19 +470,26 @@ router.post("/", authenticate, uploadLimiter, async (req: AuthRequest, res) => {
         features
       );
 
-      // Step 3: Update DB record with MAIE task_id
+      // Update ProcessingResult with MAIE task_id and source audio link
       await prisma.processingResult.update({
         where: { id: internalTaskId },
         data: {
           maieTaskId: maieResponse.task_id,
           maieStatus: maieResponse.status,
           templateId,
+          sourceAudioId: audioFileId,
+          sourceTextFilePairId: sourceTextFilePairId || null,
+          deviceId: resolvedDeviceId,
         },
       });
 
-      logger.info("Processing submitted to MAIE", {
+      // Update storage usage
+      await updateUserStorageUsage(userId);
+
+      logger.info("Processing submitted to MAIE with persisted audio", {
         internalTaskId,
         maieTaskId: maieResponse.task_id,
+        audioFileId,
         userId,
       });
 
@@ -234,57 +500,66 @@ router.post("/", authenticate, uploadLimiter, async (req: AuthRequest, res) => {
         internalTaskId,
         {
           filename: fileInfo.filename,
+          fileSize: fileInfo.size,
+          audioFileId,
+          sourceTextFilePairId,
           templateId,
           features,
+          deviceId: resolvedDeviceId,
         },
         req
       );
 
-      // Return internal ID only - never expose MAIE's task_id
-      if (!responseSent) {
-        responseSent = true;
-        res.status(202).json({
-          success: true,
-          taskId: internalTaskId,
-          status: "PENDING",
-          message: "Processing started",
-        });
-      }
-    } catch (maieError) {
-      // Mark record as failed if MAIE request fails
+      // Clean up temp file (encrypted file is now in storage)
+      await cleanupTempFile(tempFilePath);
+      tempFilePath = null;
+
+      sendResponse(202, {
+        success: true,
+        taskId: internalTaskId,
+        status: "PENDING",
+        message: "Processing started",
+        audioFileId,
+      });
+    } catch (err) {
+      logger.error("Failed to process and persist audio", {
+        err,
+        taskId: internalTaskId,
+      });
+
+      // Mark processing result as failed
       await prisma.processingResult.update({
         where: { id: internalTaskId },
         data: {
           status: "failed",
-          errorMessage:
-            maieError instanceof Error ? maieError.message : "Unknown error",
+          errorMessage: err instanceof Error ? err.message : "Unknown error",
         },
       });
 
-      logger.error("MAIE submission failed", {
-        internalTaskId,
-        error: maieError,
-      });
+      // Clean up temp file
+      if (tempFilePath) {
+        await cleanupTempFile(tempFilePath);
+      }
 
-      if (!responseSent) {
-        responseSent = true;
-        res.status(502).json({
+      // Determine appropriate error response
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      if (errorMessage.includes("MAIE")) {
+        sendResponse(502, {
           error: "AI processing service unavailable",
+          taskId: internalTaskId,
+        });
+      } else {
+        sendResponse(500, {
+          error: "Failed to process audio",
           taskId: internalTaskId,
         });
       }
     }
   });
 
-  bb.on("error", (error) => {
+  bb.on("error", async (error) => {
     logger.error("Busboy parsing error", { error, taskId: internalTaskId });
-    prisma.processingResult
-      .delete({ where: { id: internalTaskId } })
-      .catch(() => {});
-    if (!responseSent) {
-      responseSent = true;
-      res.status(400).json({ error: "Failed to parse upload" });
-    }
+    await handleError(400, "Failed to parse upload", internalTaskId);
   });
 
   req.pipe(bb);
@@ -320,6 +595,8 @@ router.get("/:taskId/status", authenticate, async (req: AuthRequest, res) => {
     res.json({
       taskId,
       status: result.status === "completed" ? "COMPLETE" : "FAILED",
+      sourceAudioId: result.sourceAudioId,
+      sourceTextFilePairId: result.sourceTextFilePairId,
       result:
         result.status === "completed"
           ? {
@@ -344,6 +621,8 @@ router.get("/:taskId/status", authenticate, async (req: AuthRequest, res) => {
       taskId,
       status: "PENDING",
       progress: 0,
+      sourceAudioId: result.sourceAudioId,
+      sourceTextFilePairId: result.sourceTextFilePairId,
     });
     return;
   }
@@ -366,10 +645,14 @@ router.get("/:taskId/status", authenticate, async (req: AuthRequest, res) => {
         maieStatus.results.clean_transcript ||
         maieStatus.results.raw_transcript;
 
-      // Encrypt summary and transcript for secure storage
-      const summaryText = summary.summary || "";
+      // Encrypt the FULL summary object (JSON) for secure storage
+      // This preserves all fields: title, summary/content, attendees, decisions, action_items, key_topics, etc.
+      const summaryJson = JSON.stringify(summary);
       const { encryptedData: summaryEncrypted, encryptedIV: summaryIv } =
-        encrypt(Buffer.from(summaryText.normalize("NFC")));
+        encrypt(Buffer.from(summaryJson.normalize("NFC")));
+
+      // Extract summary text for preview (try various field names used by templates)
+      const summaryText = summary.summary || summary.content || "";
 
       let transcriptEncrypted: Buffer | null = null;
       let transcriptIv: string | null = null;
@@ -389,7 +672,7 @@ router.get("/:taskId/status", authenticate, async (req: AuthRequest, res) => {
           summaryData: summaryEncrypted,
           summaryIv,
           summaryPreview: summaryText.normalize("NFC").slice(0, 200),
-          summarySize: Buffer.byteLength(summaryText, "utf8"),
+          summarySize: Buffer.byteLength(summaryJson, "utf8"),
           transcriptData: transcriptEncrypted,
           transcriptIv,
           transcriptSize: transcript

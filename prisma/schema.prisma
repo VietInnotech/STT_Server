@@ -112,7 +112,8 @@ model UserSettings {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // File Management Preferences
-  defaultDeleteAfterDays Int? // Default auto-delete period for uploaded files (null = never delete)
+  defaultDeleteAfterDays      Int? // Default auto-delete period for TEXT files (null = never delete)
+  defaultAudioDeleteAfterDays Int? // Default auto-delete period for AUDIO files (null = never delete)
 
   // Storage Quota (bytes)
   storageQuotaBytes BigInt @default(1073741824) // Default 1GB quota (1024^3 bytes)
@@ -177,15 +178,16 @@ model UptimeHistory {
 // FILE STORAGE (WITH ENCRYPTED DATA)
 // ============================================
 
-// Audio files table - stores encrypted audio data in database
+// Audio files table - stores encrypted audio data (filesystem or legacy DB)
 model AudioFile {
-  id            String @id @default(uuid())
+  id            String  @id @default(uuid())
   filename      String
-  originalName  String // Original filename from upload
-  fileSize      Int // Original file size (bytes)
-  encryptedData Bytes // Encrypted file content stored in DB
-  encryptedIV   String // Initialization vector for AES encryption
-  mimeType      String @default("audio/wav")
+  originalName  String  // Original filename from upload
+  fileSize      Int     // Original file size (bytes)
+  encryptedData Bytes?  // LEGACY: Encrypted file content in DB (nullable for filesystem storage)
+  encryptedIV   String  // Initialization vector for AES encryption
+  filePath      String? // NEW: Relative path to encrypted file on disk (null = legacy DB storage)
+  mimeType      String  @default("audio/wav")
   duration      Float? // Audio duration in seconds
   sampleRate    Int? // Sample rate (Hz)
   channels      Int? // Number of audio channels
@@ -263,9 +265,9 @@ model TextFilePair {
   id              String   @id @default(uuid())
   name            String? // Optional name for the pair (e.g., "Analysis 2025-11-20")
   
-  // Foreign keys for the pair
-  summaryFileId   String   @unique
-  summaryFile     TextFile @relation("SummaryFile", fields: [summaryFileId], references: [id], onDelete: Cascade)
+  // Foreign keys for the pair (summaryFileId is optional for soft deprecation)
+  summaryFileId   String?  @unique
+  summaryFile     TextFile? @relation("SummaryFile", fields: [summaryFileId], references: [id], onDelete: Cascade)
   
   realtimeFileId  String   @unique
   realtimeFile    TextFile @relation("RealtimeFile", fields: [realtimeFileId], references: [id], onDelete: Cascade)
@@ -280,6 +282,9 @@ model TextFilePair {
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  // Back-relation: Processing results linked to this pair
+  processingResults ProcessingResult[]
 
   @@index([uploadedById])
   @@index([createdAt])
@@ -366,6 +371,10 @@ model ProcessingResult {
   // Linked audio file (optional - can be null if source deleted)
   sourceAudioId   String?
   sourceAudio     AudioFile? @relation(fields: [sourceAudioId], references: [id], onDelete: SetNull)
+
+  // Linked text file pair (optional - for Android live transcript comparison)
+  sourceTextFilePairId String?
+  sourceTextFilePair   TextFilePair? @relation(fields: [sourceTextFilePairId], references: [id], onDelete: SetNull)
 
   // Content storage (encrypted for security)
   summaryData     Bytes?    // Encrypted summary content

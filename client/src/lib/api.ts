@@ -382,7 +382,22 @@ export const filesApi = {
       success: boolean;
       result: ProcessingResultItem & {
         summary: string | null;
+        // Full structured summary object from MAIE (varies by template)
+        summaryData: {
+          title?: string;
+          summary?: string;
+          content?: string;
+          attendees?: string[];
+          decisions?: string[];
+          action_items?: string[];
+          key_topics?: string[];
+          tags?: string[];
+          [key: string]: unknown; // Additional template-specific fields
+        } | null;
         transcript: string | null;
+        liveTranscript: string | null;
+        liveTranscriptPairId: string | null;
+        sourceAudioId: string | null;
       };
     }>(`/api/files/results/${id}`),
 

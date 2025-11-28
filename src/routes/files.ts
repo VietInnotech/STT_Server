@@ -1,7 +1,12 @@
 import { Router, type Request, type Response } from "express";
 import { uploadLimiter } from "../middleware/rateLimiter";
 import path from "path";
+import os from "os";
+import crypto from "crypto";
+import { createWriteStream } from "fs";
+import { unlink } from "fs/promises";
 import multer from "multer";
+import busboy from "busboy";
 import prisma from "../lib/prisma";
 import { encrypt, decrypt } from "../utils/encryption";
 import {
@@ -17,11 +22,52 @@ import {
   checkStorageQuota,
   updateUserStorageUsage,
 } from "../services/storageService";
+import {
+  saveAudioToFilesystem,
+  getAudioStream,
+  getAudioBuffer,
+  deleteAudioFile,
+  getMaxAudioSizeBytes,
+  getDefaultAudioRetentionDays,
+  cleanupTempFile,
+} from "../services/audioStorageService";
 
 const router = Router();
 
 // Require auth for all file routes
 router.use(authenticate);
+
+/**
+ * Fix UTF-8 filename encoding issues from multer.
+ * Multer/busboy may incorrectly decode UTF-8 filenames as Latin-1,
+ * causing Vietnamese and other non-ASCII characters to appear garbled.
+ * This function re-interprets the incorrectly decoded string as UTF-8.
+ */
+function fixUtf8Filename(filename: string): string {
+  try {
+    // Check if the filename looks like it was incorrectly decoded
+    // (contains high-byte Latin-1 characters that should be UTF-8)
+    const hasHighBytes = /[\x80-\xff]/.test(filename);
+    if (!hasHighBytes) {
+      return filename; // Already clean ASCII or properly decoded
+    }
+
+    // Convert the string to bytes (treating each char as a byte) then decode as UTF-8
+    const bytes = new Uint8Array(filename.length);
+    for (let i = 0; i < filename.length; i++) {
+      bytes[i] = filename.charCodeAt(i);
+    }
+    const decoded = new TextDecoder("utf-8").decode(bytes);
+
+    // Verify the decoded string is valid (doesn't contain replacement chars)
+    if (!decoded.includes("\ufffd")) {
+      return decoded;
+    }
+    return filename; // Return original if decoding failed
+  } catch {
+    return filename; // Return original on any error
+  }
+}
 
 // Configure multer to store files in memory
 const upload = multer({
@@ -36,7 +82,7 @@ const upload = multer({
  * /api/files/audio:
  *   post:
  *     summary: Upload audio file
- *     description: Upload an audio file with optional device association and auto-deletion schedule. File content is encrypted before storage.
+ *     description: Upload an audio file with optional device association and auto-deletion schedule. File content is encrypted and stored on filesystem.
  *     tags: [Files]
  *     security:
  *       - bearerAuth: []
@@ -52,14 +98,14 @@ const upload = multer({
  *               file:
  *                 type: string
  *                 format: binary
- *                 description: Audio file to upload (max 50MB)
+ *                 description: Audio file to upload (max configurable via system:maxAudioSizeBytes)
  *               deviceId:
  *                 type: string
  *                 description: Device UUID or Android device identifier
  *                 example: "550e8400-e29b-41d4-a716-446655440000"
  *               deleteAfterDays:
  *                 type: integer
- *                 description: Number of days before automatic deletion
+ *                 description: Number of days before automatic deletion (overrides user/system default)
  *                 example: 30
  *     responses:
  *       201:
@@ -76,116 +122,61 @@ const upload = multer({
  *                   $ref: '#/components/schemas/File'
  *       400:
  *         description: Bad request - no file or invalid references
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
+ *       413:
+ *         description: File too large or storage quota exceeded
  *       401:
  *         description: Unauthorized
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
  *       500:
  *         description: Internal server error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
  */
 router.post(
   "/audio",
   uploadLimiter,
-  upload.single("file"),
   requirePermission(PERMISSIONS.FILES_WRITE),
   async (req: AuthRequest, res: Response): Promise<any> => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
+    const uploadedById = req.user?.userId;
+    if (!uploadedById) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    // Get max file size limit
+    const maxAudioSize = await getMaxAudioSizeBytes();
+
+    // Use busboy for streaming upload to temp file
+    // defParamCharset: 'utf8' ensures proper handling of Vietnamese/non-ASCII filenames
+    const bb = busboy({
+      headers: req.headers,
+      limits: { fileSize: maxAudioSize },
+      defParamCharset: "utf8",
+    });
+
+    let tempFilePath: string | null = null;
+    let deviceId: string | undefined;
+    let deleteAfterDays: number | undefined;
+    let fileInfo: { filename: string; mimeType: string; size: number } | null =
+      null;
+    let fileTruncated = false;
+    let responseSent = false;
+
+    const sendResponse = (status: number, body: object) => {
+      if (!responseSent) {
+        responseSent = true;
+        res.status(status).json(body);
       }
+    };
 
-      const { deviceId, deleteAfterDays } = req.body as {
-        deviceId?: string;
-        deleteAfterDays?: number;
-      };
-      const uploadedById = req.user?.userId; // Get from authenticated user
-
-      if (!uploadedById) {
-        return res.status(401).json({ error: "User not authenticated" });
+    bb.on("field", (name, val) => {
+      if (name === "deviceId") deviceId = val;
+      if (name === "deleteAfterDays") {
+        const parsed = parseInt(val, 10);
+        if (!isNaN(parsed)) deleteAfterDays = parsed;
       }
+    });
 
-      // Check storage quota before processing
-      const quotaCheck = await checkStorageQuota(uploadedById, req.file.size);
-      if (!quotaCheck.allowed) {
-        return res.status(413).json({
-          error: "Storage quota exceeded",
-          message: quotaCheck.reason,
-        });
-      }
+    bb.on("file", (name, file, info) => {
+      const { filename, mimeType } = info;
 
-      // Get user's default deleteAfterDays if not explicitly provided
-      let finalDeleteAfterDays = deleteAfterDays;
-      if (finalDeleteAfterDays === undefined) {
-        const userSettings = await prisma.userSettings.findUnique({
-          where: { userId: uploadedById },
-          select: { defaultDeleteAfterDays: true },
-        });
-        // If the user has a personal default, use it (can be null meaning 'never').
-        // If the user has not set a value (undefined) or the value is null, fall back to the system-wide setting.
-        if (
-          userSettings &&
-          userSettings.defaultDeleteAfterDays !== undefined &&
-          userSettings.defaultDeleteAfterDays !== null
-        ) {
-          finalDeleteAfterDays = userSettings.defaultDeleteAfterDays;
-        } else {
-          // Try to read system-wide setting 'system:autoDeleteDays' from systemConfig
-          const systemSetting = await prisma.systemConfig
-            .findUnique({ where: { key: "system:autoDeleteDays" } })
-            .catch(() => null);
-          if (systemSetting) {
-            try {
-              const parsed = JSON.parse(systemSetting.value);
-              finalDeleteAfterDays =
-                typeof parsed === "number" ? parsed : Number(parsed);
-            } catch {
-              // not JSON, try raw conversion
-              const raw = systemSetting.value;
-              const n = Number(raw);
-              finalDeleteAfterDays = Number.isNaN(n) ? undefined : n;
-            }
-          } else {
-            finalDeleteAfterDays = undefined;
-          }
-        }
-      }
-
-      // Resolve deviceId: frontend may send either the internal Device.id (UUID) or the Android deviceId string
-      let resolvedDeviceId: string | null = null;
-      if (deviceId) {
-        // First try to find by primary UUID
-        const deviceById = await prisma.device
-          .findUnique({ where: { id: String(deviceId) } })
-          .catch(() => null);
-        if (deviceById) {
-          resolvedDeviceId = deviceById.id;
-        } else {
-          // Try lookup by deviceId field (android device identifier)
-          const deviceByDeviceId = await prisma.device
-            .findFirst({ where: { deviceId: String(deviceId) } })
-            .catch(() => null);
-          if (deviceByDeviceId) resolvedDeviceId = deviceByDeviceId.id;
-          else resolvedDeviceId = null; // unknown device - we'll store null to avoid FK violation
-        }
-      }
-
-      // Verify uploadedById exists in users table; if not, set to null to avoid FK violation
-      const uploaderExists = await prisma.user
-        .findUnique({ where: { id: uploadedById } })
-        .catch(() => null);
-      const resolvedUploadedById = uploaderExists ? uploadedById : null;
-
-      // Validate file MIME type and extension for audio
+      // Validate MIME type
       const allowedAudioMimes = [
         "audio/wav",
         "audio/x-wav",
@@ -205,110 +196,171 @@ router.post(
         ".aac",
         ".flac",
       ];
-      const mime = req.file.mimetype || "";
-      const ext = path.extname(req.file.originalname || "").toLowerCase();
+      const mime = mimeType || "";
+      const ext = path.extname(filename || "").toLowerCase();
 
       if (
         !allowedAudioMimes.includes(mime) &&
         !allowedAudioExts.includes(ext)
       ) {
-        return res.status(400).json({
+        file.resume(); // Drain the stream
+        sendResponse(400, {
           error:
             "Invalid audio file type. Allowed: wav, mp3, ogg, webm, m4a, aac, flac",
         });
+        return;
       }
 
-      // Encrypt file content
-      const { encryptedData, encryptedIV } = encrypt(req.file.buffer);
+      // Stream to temp file
+      tempFilePath = path.join(
+        os.tmpdir(),
+        `upload-${crypto.randomUUID()}.tmp`
+      );
+      const writeStream = createWriteStream(tempFilePath);
+      let bytesWritten = 0;
 
-      // Save to database (use resolved IDs to avoid FK violations)
-      let audioFile;
-      try {
-        audioFile = await prisma.audioFile.create({
-          data: {
-            filename: req.file.originalname,
-            originalName: req.file.originalname,
-            fileSize: req.file.size,
-            encryptedData,
-            encryptedIV,
-            mimeType: req.file.mimetype || "audio/wav",
-            deviceId: resolvedDeviceId,
-            uploadedById: resolvedUploadedById,
-            deleteAfterDays: finalDeleteAfterDays
-              ? Number(finalDeleteAfterDays)
-              : null,
-            scheduledDeleteAt: finalDeleteAfterDays
-              ? new Date(
-                  Date.now() +
-                    Number(finalDeleteAfterDays) * 24 * 60 * 60 * 1000
-                )
-              : null,
-          },
-        });
-      } catch (err: any) {
-        // Catch FK errors and return a clear message instead of raw Prisma error
-        if (err?.code === "P2003") {
-          logger.error("Foreign key constraint when creating audio file", {
-            err,
-            deviceId,
-            uploadedById,
-          });
-          return res.status(400).json({
-            error:
-              "Invalid deviceId or uploadedById. Make sure the device and user exist.",
-          });
-        }
-        throw err;
-      }
-
-      // Create audit log for upload
-      try {
-        await prisma.auditLog.create({
-          data: {
-            userId: resolvedUploadedById,
-            action: "files.upload",
-            resource: "audio",
-            resourceId: audioFile.id,
-            details: {
-              filename: audioFile.filename,
-              fileSize: audioFile.fileSize,
-              mimeType: audioFile.mimeType,
-              deviceId: resolvedDeviceId,
-            },
-            ipAddress: req.ip || req.socket.remoteAddress || "unknown",
-            userAgent: req.headers["user-agent"] || "unknown",
-            success: true,
-          },
-        });
-      } catch (logErr) {
-        logger.error("Failed to create audit log for audio upload", logErr);
-      }
-
-      // Update user's storage usage after successful upload
-      if (resolvedUploadedById) {
-        try {
-          await updateUserStorageUsage(resolvedUploadedById);
-        } catch (err) {
-          logger.warn("Failed to update storage usage after audio upload", {
-            err,
-          });
-        }
-      }
-
-      return res.status(201).json({
-        success: true,
-        file: {
-          id: audioFile.id,
-          filename: audioFile.filename,
-          fileSize: audioFile.fileSize,
-          mimeType: audioFile.mimeType,
-          uploadedAt: audioFile.uploadedAt,
-        },
+      file.on("data", (chunk: Buffer) => {
+        bytesWritten += chunk.length;
+        writeStream.write(chunk);
       });
-    } catch (error) {
-      logger.error("Error uploading audio file:", error);
-      return res.status(500).json({ error: "Failed to upload audio file" });
-    }
+
+      file.on("limit", () => {
+        fileTruncated = true;
+        logger.warn("Audio file exceeded size limit", {
+          maxAudioSize,
+          bytesWritten,
+        });
+      });
+
+      file.on("end", () => {
+        writeStream.end();
+        fileInfo = {
+          filename,
+          mimeType: mimeType || "audio/wav",
+          size: bytesWritten,
+        };
+      });
+
+      file.on("error", (err) => {
+        writeStream.destroy();
+        logger.error("File stream error", { err });
+      });
+    });
+
+    bb.on("close", async () => {
+      // Check if file was truncated
+      if (fileTruncated) {
+        if (tempFilePath) await cleanupTempFile(tempFilePath);
+        sendResponse(413, {
+          error: `File exceeds maximum size of ${Math.round(
+            maxAudioSize / 1024 / 1024
+          )}MB`,
+        });
+        return;
+      }
+
+      if (!fileInfo || !tempFilePath) {
+        sendResponse(400, { error: "No file uploaded" });
+        return;
+      }
+
+      try {
+        // Check storage quota
+        const quotaCheck = await checkStorageQuota(uploadedById, fileInfo.size);
+        if (!quotaCheck.allowed) {
+          await cleanupTempFile(tempFilePath);
+          return sendResponse(413, {
+            error: "Storage quota exceeded",
+            message: quotaCheck.reason,
+          });
+        }
+
+        // Resolve deviceId
+        let resolvedDeviceId: string | null = null;
+        if (deviceId) {
+          const deviceById = await prisma.device
+            .findUnique({ where: { id: deviceId } })
+            .catch(() => null);
+          if (deviceById) {
+            resolvedDeviceId = deviceById.id;
+          } else {
+            const deviceByDeviceId = await prisma.device
+              .findFirst({ where: { deviceId } })
+              .catch(() => null);
+            resolvedDeviceId = deviceByDeviceId?.id ?? null;
+          }
+        }
+
+        // Save to filesystem
+        const { audioFileId, filePath } = await saveAudioToFilesystem({
+          userId: uploadedById,
+          tempFilePath,
+          filename: fileInfo.filename,
+          mimeType: fileInfo.mimeType,
+          fileSize: fileInfo.size,
+          deviceId: resolvedDeviceId,
+          deleteAfterDays,
+        });
+
+        // Clean up temp file
+        await cleanupTempFile(tempFilePath);
+
+        // Get the created record for response
+        const audioFile = await prisma.audioFile.findUnique({
+          where: { id: audioFileId },
+        });
+
+        // Update storage usage
+        await updateUserStorageUsage(uploadedById);
+
+        // Audit log
+        try {
+          await prisma.auditLog.create({
+            data: {
+              userId: uploadedById,
+              action: "files.upload",
+              resource: "audio",
+              resourceId: audioFileId,
+              details: {
+                filename: fileInfo.filename,
+                fileSize: fileInfo.size,
+                mimeType: fileInfo.mimeType,
+                deviceId: resolvedDeviceId,
+                storagePath: filePath,
+              },
+              ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+              userAgent: req.headers["user-agent"] || "unknown",
+              success: true,
+            },
+          });
+        } catch (logErr) {
+          logger.error("Failed to create audit log for audio upload", logErr);
+        }
+
+        sendResponse(201, {
+          success: true,
+          file: {
+            id: audioFile?.id,
+            filename: audioFile?.filename,
+            fileSize: audioFile?.fileSize,
+            mimeType: audioFile?.mimeType,
+            uploadedAt: audioFile?.uploadedAt,
+          },
+        });
+      } catch (error) {
+        logger.error("Error uploading audio file:", error);
+        if (tempFilePath) await cleanupTempFile(tempFilePath);
+        sendResponse(500, { error: "Failed to upload audio file" });
+      }
+    });
+
+    bb.on("error", async (error) => {
+      logger.error("Busboy error:", error);
+      if (tempFilePath) await cleanupTempFile(tempFilePath);
+      sendResponse(400, { error: "Failed to parse upload" });
+    });
+
+    req.pipe(bb);
   }
 );
 
@@ -508,13 +560,16 @@ router.post(
       // Save to database (use resolved IDs to avoid FK violations)
       let textFile;
       try {
+        // Fix UTF-8 filename encoding (multer may incorrectly decode Vietnamese characters)
+        const fixedFilename = fixUtf8Filename(req.file.originalname);
+
         // Prisma client may need to be regenerated after schema changes; cast to any here to avoid type errors
         textFile = await prisma.textFile.create({
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore - dynamic fields for new schema fields
           data: {
-            filename: req.file.originalname,
-            originalName: req.file.originalname,
+            filename: fixedFilename,
+            originalName: fixedFilename,
             fileSize: req.file.size,
             encryptedData,
             encryptedIV,
@@ -1038,7 +1093,7 @@ router.get(
 
 /**
  * GET /api/files/audio/:id - Download audio file
- * Decrypts and returns file
+ * Decrypts and returns file (supports both filesystem and legacy DB storage)
  */
 router.get(
   "/audio/:id",
@@ -1082,21 +1137,26 @@ router.get(
         });
       }
 
-      // Decrypt file content
-      const decryptedData = decrypt(
-        Buffer.from(audioFile.encryptedData),
-        audioFile.encryptedIV
-      );
+      // Get decrypted content (handles both filesystem and legacy DB storage)
+      try {
+        const { stream, mimeType, filename, fileSize } = await getAudioStream(
+          audioFile.id
+        );
 
-      // Set headers
-      res.setHeader("Content-Type", audioFile.mimeType);
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${audioFile.filename}"`
-      );
-      res.setHeader("Content-Length", decryptedData.length);
+        // Set headers
+        res.setHeader("Content-Type", mimeType);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${filename}"`
+        );
+        res.setHeader("Content-Length", fileSize);
 
-      return res.send(decryptedData);
+        // Pipe the stream to response
+        stream.pipe(res);
+      } catch (streamErr) {
+        logger.error("Failed to stream audio file", { id, error: streamErr });
+        return res.status(500).json({ error: "Failed to retrieve audio file" });
+      }
     } catch (error) {
       logger.error("Error downloading audio file:", error);
       return res.status(500).json({ error: "Failed to download audio file" });
@@ -1174,7 +1234,7 @@ router.get(
 
 /**
  * DELETE /api/files/audio/:id - Delete audio file
- * Also cascade-deletes associated FileShare records
+ * Also cascade-deletes associated FileShare records and filesystem storage
  */
 router.delete(
   "/audio/:id",
@@ -1184,7 +1244,7 @@ router.delete(
       const { id } = req.params;
       const isAdmin = req.user?.roleName === "admin";
 
-      // Fetch file to check ownership and get size for storage update
+      // Fetch file to check ownership
       const file = await prisma.audioFile.findUnique({ where: { id } });
       if (!file) {
         return res.status(404).json({ error: "Audio file not found" });
@@ -1196,29 +1256,9 @@ router.delete(
           .json({ error: "Forbidden: You cannot delete this file" });
       }
 
-      // Use transaction to delete FileShare records and the file atomically
-      await prisma.$transaction(async (tx) => {
-        // Delete all FileShare records referencing this audio file
-        await tx.fileShare.deleteMany({
-          where: { fileId: id, fileType: "audio" },
-        });
-        // Delete the audio file
-        await tx.audioFile.delete({ where: { id } });
-      });
-
-      // Update user's storage usage if file had an owner
-      if (file.uploadedById) {
-        try {
-          const { updateUserStorageUsage } = await import(
-            "../services/storageService"
-          );
-          await updateUserStorageUsage(file.uploadedById);
-        } catch (err) {
-          logger.warn("Failed to update storage usage after audio delete", {
-            err,
-          });
-        }
-      }
+      // Delete from filesystem (if applicable) and database
+      // This handles FileShare cascade, storage update, and filesystem cleanup
+      await deleteAudioFile(file.id);
 
       // Audit log
       try {
@@ -1228,7 +1268,11 @@ router.delete(
             action: "files.delete",
             resource: "audio",
             resourceId: id,
-            details: { filename: file.filename, fileSize: file.fileSize },
+            details: {
+              filename: file.filename,
+              fileSize: file.fileSize,
+              hadFilePath: !!file.filePath,
+            },
             ipAddress: req.ip || req.socket.remoteAddress || "unknown",
             userAgent: req.headers["user-agent"] || "unknown",
             success: true,
@@ -1437,7 +1481,13 @@ router.post(
  * /api/files/text-pair-android:
  *   post:
  *     summary: Upload text file pair from Android app
- *     description: Android endpoint to upload both summary and realtime text content in a single JSON request. Creates two TextFile records and links them with TextFilePair.
+ *     description: |
+ *       Android endpoint to upload summary and/or realtime text content in a single JSON request.
+ *       Creates TextFile records and links them with TextFilePair.
+ *
+ *       **Note:** The `summary` field is now optional (soft deprecated). New implementations
+ *       should prefer sending only the `realtime` content. Legacy clients sending both fields
+ *       will continue to work as before.
  *     tags: [Files]
  *     security:
  *       - bearerAuth: []
@@ -1448,13 +1498,12 @@ router.post(
  *           schema:
  *             type: object
  *             required:
- *               - summary
  *               - realtime
  *               - deviceId
  *             properties:
  *               summary:
  *                 type: string
- *                 description: Summary text content
+ *                 description: Summary text content (optional, soft deprecated)
  *                 example: "System status report..."
  *               realtime:
  *                 type: string
@@ -1490,6 +1539,8 @@ router.post(
  *                       type: string
  *                     summaryFileId:
  *                       type: string
+ *                       nullable: true
+ *                       description: Null if no summary was provided
  *                     realtimeFileId:
  *                       type: string
  *                     uploadedAt:
@@ -1516,11 +1567,9 @@ router.post(
           pairName?: string;
         };
 
-      // Validate required fields
-      if (!summary || !realtime) {
-        return res
-          .status(400)
-          .json({ error: "Both summary and realtime content are required" });
+      // Validate required fields (summary is now optional / soft deprecated)
+      if (!realtime) {
+        return res.status(400).json({ error: "Realtime content is required" });
       }
 
       const uploadedById = req.user?.userId;
@@ -1529,9 +1578,8 @@ router.post(
       }
 
       // Check storage quota before processing (calculate combined size)
-      const combinedSize =
-        Buffer.byteLength(summary, "utf8") +
-        Buffer.byteLength(realtime, "utf8");
+      const summarySize = summary ? Buffer.byteLength(summary, "utf8") : 0;
+      const combinedSize = summarySize + Buffer.byteLength(realtime, "utf8");
       const quotaCheck = await checkStorageQuota(uploadedById, combinedSize);
       if (!quotaCheck.allowed) {
         return res.status(413).json({
@@ -1578,31 +1626,36 @@ router.post(
         ? new Date(Date.now() + finalDeleteAfterDays * 24 * 60 * 60 * 1000)
         : null;
 
-      // Create both files and pair in transaction
+      // Create files and pair in transaction (summary is optional)
       const result = await prisma.$transaction(async (tx) => {
-        // Encrypt both contents
-        const { encryptedData: summaryEncrypted, encryptedIV: summaryIV } =
-          encrypt(Buffer.from(summary));
+        let summaryFile: { id: string } | null = null;
+
+        // Create summary file only if summary content provided
+        if (summary) {
+          const { encryptedData: summaryEncrypted, encryptedIV: summaryIV } =
+            encrypt(Buffer.from(summary));
+
+          summaryFile = await tx.textFile.create({
+            data: {
+              filename: `${pairName || "summary"}_${Date.now()}.txt`,
+              originalName: `${pairName || "summary"}.txt`,
+              fileSize: Buffer.byteLength(summary, "utf8"),
+              encryptedData: summaryEncrypted,
+              encryptedIV: summaryIV,
+              origin: "android",
+              deviceId: resolvedDeviceId,
+              uploadedById: resolvedUploadedById,
+              deleteAfterDays: finalDeleteAfterDays,
+              scheduledDeleteAt: scheduledDeleteAt,
+              // Also store the android summary payload for UI quick preview
+              androidSummary: summary,
+            },
+          });
+        }
+
+        // Encrypt realtime content
         const { encryptedData: realtimeEncrypted, encryptedIV: realtimeIV } =
           encrypt(Buffer.from(realtime));
-
-        // Create summary file
-        const summaryFile = await tx.textFile.create({
-          data: {
-            filename: `${pairName || "summary"}_${Date.now()}.txt`,
-            originalName: `${pairName || "summary"}.txt`,
-            fileSize: Buffer.byteLength(summary, "utf8"),
-            encryptedData: summaryEncrypted,
-            encryptedIV: summaryIV,
-            origin: "android",
-            deviceId: resolvedDeviceId,
-            uploadedById: resolvedUploadedById,
-            deleteAfterDays: finalDeleteAfterDays,
-            scheduledDeleteAt: scheduledDeleteAt,
-            // Also store the android summary payload for UI quick preview
-            androidSummary: summary,
-          },
-        });
 
         // Create realtime file
         const realtimeFile = await tx.textFile.create({
@@ -1622,11 +1675,11 @@ router.post(
           },
         });
 
-        // Create pair
+        // Create pair (summaryFileId is optional now)
         const pair = await tx.textFilePair.create({
           data: {
             name: pairName,
-            summaryFileId: summaryFile.id,
+            summaryFileId: summaryFile?.id || null,
             realtimeFileId: realtimeFile.id,
             uploadedById: resolvedUploadedById,
             deleteAfterDays: finalDeleteAfterDays,
@@ -1647,9 +1700,10 @@ router.post(
             resourceId: result.pair.id,
             details: {
               pairName,
-              summaryFileId: result.summaryFile.id,
+              summaryFileId: result.summaryFile?.id || null,
               realtimeFileId: result.realtimeFile.id,
               deviceId: resolvedDeviceId,
+              hasSummary: !!result.summaryFile,
             },
             ipAddress: req.ip || req.socket.remoteAddress || "unknown",
             userAgent: req.headers["user-agent"] || "unknown",
@@ -1677,7 +1731,7 @@ router.post(
         io.to(req.user?.userId || "").emit("files:text_pair_created", {
           pairId: result.pair.id,
           pairName,
-          summaryFileId: result.summaryFile.id,
+          summaryFileId: result.summaryFile?.id || null,
           realtimeFileId: result.realtimeFile.id,
           timestamp: new Date().toISOString(),
         });
@@ -1690,7 +1744,7 @@ router.post(
         pair: {
           id: result.pair.id,
           name: result.pair.name,
-          summaryFileId: result.summaryFile.id,
+          summaryFileId: result.summaryFile?.id || null,
           realtimeFileId: result.realtimeFile.id,
           uploadedAt: result.pair.createdAt,
         },
@@ -1811,10 +1865,12 @@ router.post(
 
         if (summaryFile) {
           const { encryptedData, encryptedIV } = encrypt(summaryFile.buffer);
+          // Fix UTF-8 filename encoding (multer may incorrectly decode Vietnamese characters)
+          const fixedSummaryName = fixUtf8Filename(summaryFile.originalname);
           summaryTextFile = await tx.textFile.create({
             data: {
               filename: `summary_${Date.now()}.txt`,
-              originalName: summaryFile.originalname,
+              originalName: fixedSummaryName,
               fileSize: summaryFile.size,
               encryptedData,
               encryptedIV,
@@ -1828,10 +1884,12 @@ router.post(
 
         if (realtimeFile) {
           const { encryptedData, encryptedIV } = encrypt(realtimeFile.buffer);
+          // Fix UTF-8 filename encoding (multer may incorrectly decode Vietnamese characters)
+          const fixedRealtimeName = fixUtf8Filename(realtimeFile.originalname);
           realtimeTextFile = await tx.textFile.create({
             data: {
               filename: `realtime_${Date.now()}.txt`,
-              originalName: realtimeFile.originalname,
+              originalName: fixedRealtimeName,
               fileSize: realtimeFile.size,
               encryptedData,
               encryptedIV,
@@ -1875,8 +1933,12 @@ router.post(
             resourceId: result.pair.id,
             details: {
               pairName,
-              summaryFileName: summaryFile?.originalname,
-              realtimeFileName: realtimeFile?.originalname,
+              summaryFileName: summaryFile
+                ? fixUtf8Filename(summaryFile.originalname)
+                : undefined,
+              realtimeFileName: realtimeFile
+                ? fixUtf8Filename(realtimeFile.originalname)
+                : undefined,
               source: "web",
             },
             ipAddress: req.ip || req.socket.remoteAddress || "unknown",
@@ -1991,14 +2053,16 @@ router.get(
           name: pair.name,
           uploadedById: pair.uploadedById,
           uploadedBy: pair.uploadedBy,
-          summaryFile: {
-            id: pair.summaryFile.id,
-            filename: pair.summaryFile.filename,
-            originalName: pair.summaryFile.originalName,
-            fileSize: pair.summaryFile.fileSize,
-            origin: pair.summaryFile.origin,
-            uploadedAt: pair.summaryFile.uploadedAt,
-          },
+          summaryFile: pair.summaryFile
+            ? {
+                id: pair.summaryFile.id,
+                filename: pair.summaryFile.filename,
+                originalName: pair.summaryFile.originalName,
+                fileSize: pair.summaryFile.fileSize,
+                origin: pair.summaryFile.origin,
+                uploadedAt: pair.summaryFile.uploadedAt,
+              }
+            : null,
           realtimeFile: {
             id: pair.realtimeFile.id,
             filename: pair.realtimeFile.filename,
@@ -2734,6 +2798,12 @@ router.get(
           uploadedBy: {
             select: { id: true, username: true, fullName: true },
           },
+          sourceTextFilePair: {
+            include: {
+              summaryFile: true,
+              realtimeFile: true,
+            },
+          },
         },
       });
 
@@ -2749,15 +2819,28 @@ router.get(
       }
 
       // Decrypt content
-      let summary: string | null = null;
+      let summaryRaw: string | null = null;
+      let summaryObject: Record<string, unknown> | null = null;
       let transcript: string | null = null;
 
       if (result.summaryData && result.summaryIv) {
         try {
-          summary = decrypt(
+          summaryRaw = decrypt(
             Buffer.from(result.summaryData),
             result.summaryIv
           ).toString("utf8");
+
+          // Try to parse as JSON (new format: full MAIE summary object)
+          // If parsing fails, treat it as plain text (legacy data)
+          try {
+            const parsed = JSON.parse(summaryRaw);
+            if (typeof parsed === "object" && parsed !== null) {
+              summaryObject = parsed as Record<string, unknown>;
+            }
+          } catch {
+            // Legacy data: plain text summary, wrap in object
+            summaryObject = { summary: summaryRaw };
+          }
         } catch (decErr) {
           logger.error("Failed to decrypt summary", { id, error: decErr });
         }
@@ -2774,6 +2857,42 @@ router.get(
         }
       }
 
+      // Decrypt live transcript from linked TextFilePair (if exists)
+      let liveTranscript: string | null = null;
+      let liveTranscriptPairId: string | null = null;
+
+      if (result.sourceTextFilePair?.realtimeFile) {
+        liveTranscriptPairId = result.sourceTextFilePair.id;
+        const realtimeFile = result.sourceTextFilePair.realtimeFile;
+
+        // Try androidRealtime first (quick preview), then decrypt encryptedData
+        if (
+          realtimeFile.androidRealtime &&
+          typeof realtimeFile.androidRealtime === "string"
+        ) {
+          liveTranscript = realtimeFile.androidRealtime;
+        } else if (realtimeFile.encryptedData && realtimeFile.encryptedIV) {
+          try {
+            liveTranscript = decrypt(
+              Buffer.from(realtimeFile.encryptedData),
+              realtimeFile.encryptedIV
+            ).toString("utf8");
+          } catch (decErr) {
+            logger.error("Failed to decrypt live transcript", {
+              id,
+              error: decErr,
+            });
+          }
+        }
+      }
+
+      // Extract summary text - try various field names used by MAIE templates
+      const summaryText = summaryObject
+        ? (summaryObject.summary as string) ||
+          (summaryObject.content as string) ||
+          null
+        : null;
+
       return res.json({
         success: true,
         result: {
@@ -2781,8 +2900,14 @@ router.get(
           title: result.title,
           templateId: result.templateId,
           templateName: result.templateName,
-          summary,
+          // Main summary text for backward compatibility
+          summary: summaryText,
+          // Full structured summary object (includes attendees, action_items, key_topics, decisions, etc.)
+          summaryData: summaryObject,
           transcript,
+          liveTranscript,
+          liveTranscriptPairId,
+          sourceAudioId: result.sourceAudioId,
           tags: result.tags.map((t) => t.tag.name),
           confidence: result.confidence,
           processingTime: result.processingTime,

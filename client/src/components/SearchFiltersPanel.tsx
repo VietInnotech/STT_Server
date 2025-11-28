@@ -112,7 +112,7 @@ export default function SearchFiltersPanel({
       toDate: "",
       minConfidence: null,
       maxConfidence: null,
-      status: "completed",
+      status: "all",
       sortBy: "date",
       order: "desc",
     });
@@ -126,7 +126,7 @@ export default function SearchFiltersPanel({
     filters.toDate ||
     filters.minConfidence !== null ||
     filters.maxConfidence !== null ||
-    filters.status !== "completed";
+    filters.status !== "all";
 
   // Filter tags based on search query for display
   const filteredTags = availableTags.filter((tag) =>

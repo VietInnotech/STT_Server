@@ -1,6 +1,7 @@
-import cron from 'node-cron'
-import prisma from '../lib/prisma'
-import logger from '../lib/logger'
+import cron from "node-cron";
+import prisma from "../lib/prisma";
+import logger from "../lib/logger";
+import { deleteAudioFile } from "./audioStorageService";
 
 /**
  * Scheduler service
@@ -11,48 +12,62 @@ import logger from '../lib/logger'
 export function startScheduler() {
   // Run once at startup to avoid waiting until 2AM on first boot
   processExpiredFiles()
-    .then(() => logger.info('Initial file cleanup check completed'))
-    .catch((err) => logger.error('Initial file cleanup failed', { err }))
+    .then(() => logger.info("Initial file cleanup check completed"))
+    .catch((err) => logger.error("Initial file cleanup failed", { err }));
 
   // Schedule daily run at 02:00
-  cron.schedule('0 2 * * *', async () => {
-    await processExpiredFiles()
-  })
+  cron.schedule("0 2 * * *", async () => {
+    await processExpiredFiles();
+  });
 
-  logger.info('Scheduler started: daily cleanup at 02:00')
+  logger.info("Scheduler started: daily cleanup at 02:00");
 }
 
 export async function processExpiredFiles() {
-  const now = new Date()
+  const now = new Date();
 
   // Step 1: Backfill scheduledDeleteAt for records that have deleteAfterDays but no scheduledDeleteAt
-  await backfillSchedules()
+  await backfillSchedules();
 
-  // Step 2: Delete expired Audio files
+  // Step 2: Delete expired Audio files (handles filesystem cleanup via audioStorageService)
   const expiredAudio = await prisma.audioFile.findMany({
     where: { scheduledDeleteAt: { lte: now } },
-    select: { id: true, filename: true, fileSize: true, uploadedById: true },
-  })
+    select: {
+      id: true,
+      filename: true,
+      fileSize: true,
+      uploadedById: true,
+      filePath: true,
+    },
+  });
 
   if (expiredAudio.length > 0) {
-    logger.info(`Deleting ${expiredAudio.length} expired audio files`)
+    logger.info(`Deleting ${expiredAudio.length} expired audio files`);
   }
 
   for (const file of expiredAudio) {
     try {
-      await prisma.audioFile.delete({ where: { id: file.id } })
+      // Use audioStorageService which handles filesystem cleanup, FileShare cascade, and storage update
+      await deleteAudioFile(file.id);
       await prisma.auditLog.create({
         data: {
           userId: file.uploadedById ?? undefined,
-          action: 'files.auto_delete',
-          resource: 'audio',
+          action: "files.auto_delete",
+          resource: "audio",
           resourceId: file.id,
-          details: { filename: file.filename, fileSize: file.fileSize },
+          details: {
+            filename: file.filename,
+            fileSize: file.fileSize,
+            hadFilePath: !!file.filePath,
+          },
           success: true,
         },
-      })
+      });
     } catch (err) {
-      logger.error('Failed to auto-delete audio file', { err, fileId: file.id })
+      logger.error("Failed to auto-delete audio file", {
+        err,
+        fileId: file.id,
+      });
     }
   }
 
@@ -60,27 +75,27 @@ export async function processExpiredFiles() {
   const expiredText = await prisma.textFile.findMany({
     where: { scheduledDeleteAt: { lte: now } },
     select: { id: true, filename: true, fileSize: true, uploadedById: true },
-  })
+  });
 
   if (expiredText.length > 0) {
-    logger.info(`Deleting ${expiredText.length} expired text files`)
+    logger.info(`Deleting ${expiredText.length} expired text files`);
   }
 
   for (const file of expiredText) {
     try {
-      await prisma.textFile.delete({ where: { id: file.id } })
+      await prisma.textFile.delete({ where: { id: file.id } });
       await prisma.auditLog.create({
         data: {
           userId: file.uploadedById ?? undefined,
-          action: 'files.auto_delete',
-          resource: 'text',
+          action: "files.auto_delete",
+          resource: "text",
           resourceId: file.id,
           details: { filename: file.filename, fileSize: file.fileSize },
           success: true,
         },
-      })
+      });
     } catch (err) {
-      logger.error('Failed to auto-delete text file', { err, fileId: file.id })
+      logger.error("Failed to auto-delete text file", { err, fileId: file.id });
     }
   }
 }
@@ -93,16 +108,16 @@ async function backfillSchedules() {
       scheduledDeleteAt: null,
     },
     select: { id: true, uploadedAt: true, deleteAfterDays: true },
-  })
+  });
 
   for (const f of audioToSchedule) {
-    const days = f.deleteAfterDays!
-    const scheduled = new Date(f.uploadedAt)
-    scheduled.setDate(scheduled.getDate() + days)
+    const days = f.deleteAfterDays!;
+    const scheduled = new Date(f.uploadedAt);
+    scheduled.setDate(scheduled.getDate() + days);
     await prisma.audioFile.update({
       where: { id: f.id },
       data: { scheduledDeleteAt: scheduled },
-    })
+    });
   }
 
   // Text: set scheduledDeleteAt where missing and deleteAfterDays is set
@@ -112,17 +127,17 @@ async function backfillSchedules() {
       scheduledDeleteAt: null,
     },
     select: { id: true, uploadedAt: true, deleteAfterDays: true },
-  })
+  });
 
   for (const f of textToSchedule) {
-    const days = f.deleteAfterDays!
-    const scheduled = new Date(f.uploadedAt)
-    scheduled.setDate(scheduled.getDate() + days)
+    const days = f.deleteAfterDays!;
+    const scheduled = new Date(f.uploadedAt);
+    scheduled.setDate(scheduled.getDate() + days);
     await prisma.textFile.update({
       where: { id: f.id },
       data: { scheduledDeleteAt: scheduled },
-    })
+    });
   }
 }
 
-export default { startScheduler }
+export default { startScheduler };

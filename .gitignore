@@ -32,3 +32,28 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Local VS Code settings
+.vscode/
+
+# Local database and backups
+prisma/dev.db
+backups/
+*.bak
+
+# Local data uploads and runtime files
+data/
+
+# Ignore log artifacts (server logs and compressed logs)
+*.log
+*.log.*
+logs/
+logs/**
+*.gz
+*.json.log
+*.audit.json
+
+# OS/editor temp files
+*.swp
+*~
+.idea/

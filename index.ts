@@ -19,6 +19,7 @@ import {
   uploadLimiter,
 } from "./src/middleware/rateLimiter";
 import { startScheduler } from "./src/services/scheduler";
+import { initAudioStorage } from "./src/services/audioStorageService";
 import {
   setIo,
   registerUserSocket,
@@ -365,7 +366,7 @@ if (isDev) {
 }
 
 // Start server
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   logger.info(`Server running on http://localhost:${PORT}`, {
     mode: isDev ? "development" : "production",
     corsOrigin: isDev
@@ -377,6 +378,14 @@ httpServer.listen(PORT, () => {
   });
   logger.info(`Socket.IO enabled`);
   logger.info(`Mode: ${isDev ? "Development" : "Production"}`);
+
+  // Initialize audio storage directory
+  try {
+    await initAudioStorage();
+  } catch (err) {
+    logger.error("Failed to initialize audio storage", { err });
+  }
+
   // Start background scheduler (auto-delete, maintenance)
   try {
     startScheduler();
