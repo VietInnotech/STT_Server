@@ -193,7 +193,14 @@ export default function ProcessingResultsTab() {
   const [loadingTags, setLoadingTags] = useState(false);
 
   // Edit and Export state
-  const [editingResult, setEditingResult] = useState<(ProcessingResultItem & { summary?: string; summaryData?: any; transcript?: string }) | null>(null);
+  const [editingResult, setEditingResult] = useState<
+    | (ProcessingResultItem & {
+        summary?: string;
+        summaryData?: any;
+        transcript?: string;
+      })
+    | null
+  >(null);
   const [isExporting, setIsExporting] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
@@ -348,7 +355,11 @@ export default function ProcessingResultsTab() {
 
     try {
       await filesApi.updateResult(editingResult.id, data);
-      toast.success(t("results.updateSuccess", { defaultValue: "Result updated successfully" }));
+      toast.success(
+        t("results.updateSuccess", {
+          defaultValue: "Result updated successfully",
+        })
+      );
 
       // Refresh the result list and close edit modal
       await fetchResults();
@@ -359,7 +370,9 @@ export default function ProcessingResultsTab() {
         await handleViewClick(viewingResult);
       }
     } catch (err) {
-      toast.error(t("results.updateFailed", { defaultValue: "Failed to update result" }));
+      toast.error(
+        t("results.updateFailed", { defaultValue: "Failed to update result" })
+      );
       console.error("Failed to update result", err);
       throw err;
     }
@@ -392,12 +405,19 @@ export default function ProcessingResultsTab() {
 
       setTimeout(() => URL.revokeObjectURL(url), 100);
 
-      const successMsg = t(`results.export${format.charAt(0).toUpperCase() + format.slice(1)}Success`, {
-        defaultValue: `${format.toUpperCase()} file exported successfully`,
-      });
+      const successMsg = t(
+        `results.export${
+          format.charAt(0).toUpperCase() + format.slice(1)
+        }Success`,
+        {
+          defaultValue: `${format.toUpperCase()} file exported successfully`,
+        }
+      );
       toast.success(successMsg);
     } catch (err) {
-      toast.error(t("results.exportFailed", { defaultValue: "Failed to export file" }));
+      toast.error(
+        t("results.exportFailed", { defaultValue: "Failed to export file" })
+      );
       console.error("Failed to export result", err);
     } finally {
       setIsExporting(null);
@@ -507,7 +527,9 @@ export default function ProcessingResultsTab() {
         </div>
         {/* View toggle button */}
         <button
-          onClick={() => setResultsViewMode(resultsViewMode === "list" ? "card" : "list")}
+          onClick={() =>
+            setResultsViewMode(resultsViewMode === "list" ? "card" : "list")
+          }
           className="flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
           title={resultsViewMode === "list" ? t("viewCards") : t("viewList")}
         >
@@ -674,7 +696,9 @@ export default function ProcessingResultsTab() {
                   )}`}
                 >
                   {getStatusIcon(result.status)}
-                  <span className="hidden md:inline">{t(`results.${result.status}`)}</span>
+                  <span className="hidden md:inline">
+                    {t(`results.${result.status}`)}
+                  </span>
                 </span>
 
                 {/* Confidence */}
@@ -753,7 +777,7 @@ export default function ProcessingResultsTab() {
                       {getStatusIcon(result.status)}
                     </span>
                   </div>
-                  
+
                   {/* Summary Preview */}
                   {result.summaryPreview && (
                     <p className="text-xs text-gray-500 mt-2 line-clamp-2">
@@ -797,7 +821,9 @@ export default function ProcessingResultsTab() {
                     </div>
                     <span className="flex items-center gap-1">
                       <Calendar className="h-3.5 w-3.5" />
-                      {result.processedAt ? formatDate(result.processedAt) : "-"}
+                      {result.processedAt
+                        ? formatDate(result.processedAt)
+                        : "-"}
                     </span>
                   </div>
                 </div>
@@ -890,7 +916,9 @@ export default function ProcessingResultsTab() {
                       {isExporting ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin" />
-                          {t("results.exporting", { defaultValue: "Exporting..." })}
+                          {t("results.exporting", {
+                            defaultValue: "Exporting...",
+                          })}
                         </>
                       ) : (
                         <>
@@ -908,19 +936,25 @@ export default function ProcessingResultsTab() {
                           onClick={() => handleExport("markdown")}
                           className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 first:rounded-t-lg"
                         >
-                          {t("results.exportMarkdown", { defaultValue: "Download as Markdown" })}
+                          {t("results.exportMarkdown", {
+                            defaultValue: "Download as Markdown",
+                          })}
                         </button>
                         <button
                           onClick={() => handleExport("word")}
                           className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
                         >
-                          {t("results.exportWord", { defaultValue: "Download as Word" })}
+                          {t("results.exportWord", {
+                            defaultValue: "Download as Word",
+                          })}
                         </button>
                         <button
                           onClick={() => handleExport("pdf")}
                           className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 last:rounded-b-lg"
                         >
-                          {t("results.exportPdf", { defaultValue: "Download as PDF" })}
+                          {t("results.exportPdf", {
+                            defaultValue: "Download as PDF",
+                          })}
                         </button>
                       </div>
                     )}

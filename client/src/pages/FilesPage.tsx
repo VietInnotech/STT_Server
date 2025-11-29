@@ -414,8 +414,7 @@ export default function FilesPage() {
         const resp = await filesApi.getAudio(file.id);
         let blob = resp.data as Blob;
         try {
-          const contentType =
-            (resp as any).headers?.["content-type"] || "";
+          const contentType = (resp as any).headers?.["content-type"] || "";
           if (contentType && blob.type !== contentType) {
             blob = new Blob([blob], { type: contentType });
           }
@@ -456,8 +455,7 @@ export default function FilesPage() {
       (file as any).isPair ||
         (file.type === "text" &&
           (file as any).origin === "android" &&
-          ((file as any).androidSummary ||
-            (file as any).androidRealtime))
+          ((file as any).androidSummary || (file as any).androidRealtime))
     );
   };
 
