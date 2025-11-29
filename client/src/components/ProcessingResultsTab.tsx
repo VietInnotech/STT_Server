@@ -18,12 +18,18 @@ import {
   X,
   Mic,
   FileAudio,
+  Edit,
+  Download,
+  ChevronDown,
+  List,
+  LayoutGrid,
 } from "lucide-react";
 import { filesApi, type ProcessingResultItem, templatesApi } from "../lib/api";
 import { useSettingsStore } from "../stores/settings";
 import { formatDate } from "../lib/formatters";
 import { Pagination } from "./Pagination";
 import Modal from "./Modal";
+import { EditResultModal, type EditableResultData } from "./EditResultModal";
 import toast from "react-hot-toast";
 import { usePermission } from "../hooks/usePermission";
 import { PERMISSIONS } from "../lib/permissions";
@@ -136,6 +142,8 @@ function SummaryDataSection({
 export default function ProcessingResultsTab() {
   const { t } = useTranslation("files");
   const itemsPerPage = useSettingsStore((s) => s.itemsPerPage);
+  const resultsViewMode = useSettingsStore((s) => s.resultsViewMode);
+  const setResultsViewMode = useSettingsStore((s) => s.setResultsViewMode);
   const { can } = usePermission();
   const canDelete = can(PERMISSIONS.FILES_DELETE);
 
@@ -184,6 +192,11 @@ export default function ProcessingResultsTab() {
   const [showFilters, setShowFilters] = useState(false);
   const [loadingTags, setLoadingTags] = useState(false);
 
+  // Edit and Export state
+  const [editingResult, setEditingResult] = useState<(ProcessingResultItem & { summary?: string; summaryData?: any; transcript?: string }) | null>(null);
+  const [isExporting, setIsExporting] = useState<string | null>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+
   // Tags and templates for filters
   const [availableTags, setAvailableTags] = useState<
     Array<{ name: string; count: number }>
@@ -196,6 +209,20 @@ export default function ProcessingResultsTab() {
   useEffect(() => {
     setCurrentPage(1);
   }, [itemsPerPage, filters]);
+
+  // Close export menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (showExportMenu) {
+        setShowExportMenu(false);
+      }
+    };
+
+    if (showExportMenu) {
+      document.addEventListener("click", handleClickOutside);
+      return () => document.removeEventListener("click", handleClickOutside);
+    }
+  }, [showExportMenu]);
 
   // Fetch available tags for filter dropdown with optional search query
   const fetchTags = useCallback(async (query?: string) => {
@@ -301,6 +328,82 @@ export default function ProcessingResultsTab() {
     }
   };
 
+  // Edit result
+  const handleEditClick = () => {
+    if (!viewingResult || !resultContent) return;
+
+    // Combine viewingResult with loaded content
+    const editableResult = {
+      ...viewingResult,
+      summary: resultContent.summary || "",
+      summaryData: resultContent.summaryData || {},
+      transcript: resultContent.transcript || "",
+    };
+
+    setEditingResult(editableResult);
+  };
+
+  const handleSaveEdit = async (data: EditableResultData) => {
+    if (!editingResult) return;
+
+    try {
+      await filesApi.updateResult(editingResult.id, data);
+      toast.success(t("results.updateSuccess", { defaultValue: "Result updated successfully" }));
+
+      // Refresh the result list and close edit modal
+      await fetchResults();
+      setEditingResult(null);
+
+      // If the detail modal is still open, refresh its content
+      if (viewingResult?.id === editingResult.id) {
+        await handleViewClick(viewingResult);
+      }
+    } catch (err) {
+      toast.error(t("results.updateFailed", { defaultValue: "Failed to update result" }));
+      console.error("Failed to update result", err);
+      throw err;
+    }
+  };
+
+  // Export result
+  const handleExport = async (format: "markdown" | "word" | "pdf") => {
+    if (!viewingResult) return;
+
+    try {
+      setIsExporting(format);
+      setShowExportMenu(false);
+
+      const exportFn = {
+        markdown: filesApi.exportResultMarkdown,
+        word: filesApi.exportResultWord,
+        pdf: filesApi.exportResultPdf,
+      }[format];
+
+      const res = await exportFn(viewingResult.id);
+
+      // Create download link
+      const url = URL.createObjectURL(res.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${viewingResult.title || "result"}.${
+        { markdown: "md", word: "docx", pdf: "pdf" }[format]
+      }`;
+      link.click();
+
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+
+      const successMsg = t(`results.export${format.charAt(0).toUpperCase() + format.slice(1)}Success`, {
+        defaultValue: `${format.toUpperCase()} file exported successfully`,
+      });
+      toast.success(successMsg);
+    } catch (err) {
+      toast.error(t("results.exportFailed", { defaultValue: "Failed to export file" }));
+      console.error("Failed to export result", err);
+    } finally {
+      setIsExporting(null);
+    }
+  };
+
   const hasActiveFilters =
     filters.q ||
     filters.tags.length > 0 ||
@@ -390,16 +493,30 @@ export default function ProcessingResultsTab() {
         </div>
       </div>
 
-      {/* Search bar */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-        <input
-          type="text"
-          placeholder={t("results.searchPlaceholder")}
-          value={filters.q}
-          onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
-          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+      {/* Search bar with view toggle */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <input
+            type="text"
+            placeholder={t("results.searchPlaceholder")}
+            value={filters.q}
+            onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        {/* View toggle button */}
+        <button
+          onClick={() => setResultsViewMode(resultsViewMode === "list" ? "card" : "list")}
+          className="flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+          title={resultsViewMode === "list" ? t("viewCards") : t("viewList")}
+        >
+          {resultsViewMode === "list" ? (
+            <LayoutGrid className="h-5 w-5" />
+          ) : (
+            <List className="h-5 w-5" />
+          )}
+        </button>
       </div>
 
       {/* Active filter badges (when filters panel is closed) */}
@@ -506,7 +623,7 @@ export default function ProcessingResultsTab() {
         />
       )}
 
-      {/* Results Table */}
+      {/* Results Display */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-12">
@@ -518,137 +635,200 @@ export default function ProcessingResultsTab() {
             <p>{t("results.noResults")}</p>
             <p className="text-sm mt-2">{t("results.noResultsHint")}</p>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("results.result")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("results.template")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("results.tags")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("results.confidence")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("results.duration")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("results.status")}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("results.processedAt")}
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {t("actions")}
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {results.map((result) => (
-                  <tr
-                    key={result.id}
-                    className="hover:bg-gray-50 cursor-pointer"
-                    onDoubleClick={() => handleViewResult(result)}
-                  >
-                    <td className="px-6 py-4">
-                      <div className="flex items-start gap-3">
-                        <FileText className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-gray-900 truncate max-w-xs">
-                            {result.title || "-"}
-                          </div>
-                          {result.summaryPreview && (
-                            <div className="text-xs text-gray-500 truncate max-w-xs mt-1">
-                              {result.summaryPreview}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {result.templateName || result.templateId || "-"}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1 max-w-xs">
-                        {result.tags.slice(0, 3).map((tag) => (
-                          <span
-                            key={tag}
-                            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                        {result.tags.length > 3 && (
-                          <span className="text-xs text-gray-500">
-                            +{result.tags.length - 3}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-1">
-                        <BarChart3 className="h-4 w-4 text-gray-400" />
-                        <span className="text-sm text-gray-700">
-                          {formatConfidence(result.confidence)}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-1">
-                        <Clock className="h-4 w-4 text-gray-400" />
-                        <span className="text-sm text-gray-700">
-                          {formatDuration(result.audioDuration)}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusBadgeClass(
-                          result.status
-                        )}`}
-                      >
-                        {getStatusIcon(result.status)}
-                        {t(`results.${result.status}`)}
+        ) : resultsViewMode === "list" ? (
+          /* ===== LIST VIEW ===== */
+          <div className="divide-y divide-gray-100">
+            {results.map((result) => (
+              <div
+                key={result.id}
+                className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer group"
+                onDoubleClick={() => handleViewResult(result)}
+              >
+                {/* Icon and Title - main content */}
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center">
+                    <FileText className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-gray-900 truncate">
+                      {result.title || "-"}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
+                      <span className="truncate max-w-[200px]">
+                        {result.templateName || result.templateId || "-"}
                       </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <div className="flex items-center gap-1">
-                        <Calendar className="h-4 w-4 text-gray-400" />
-                        {result.processedAt
-                          ? formatDate(result.processedAt)
-                          : "-"}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => handleViewResult(result)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title={t("results.viewResult")}
+                      {result.tags.length > 0 && (
+                        <span className="hidden sm:inline-flex items-center gap-1">
+                          <Tag className="h-3 w-3" />
+                          {result.tags.length}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Status Badge */}
+                <span
+                  className={`hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(
+                    result.status
+                  )}`}
+                >
+                  {getStatusIcon(result.status)}
+                  <span className="hidden md:inline">{t(`results.${result.status}`)}</span>
+                </span>
+
+                {/* Confidence */}
+                <div className="hidden md:flex items-center gap-1 text-xs text-gray-500 w-16">
+                  <BarChart3 className="h-3.5 w-3.5" />
+                  {formatConfidence(result.confidence)}
+                </div>
+
+                {/* Duration */}
+                <div className="hidden lg:flex items-center gap-1 text-xs text-gray-500 w-16">
+                  <Clock className="h-3.5 w-3.5" />
+                  {formatDuration(result.audioDuration)}
+                </div>
+
+                {/* Date */}
+                <div className="hidden lg:block text-xs text-gray-500 w-24">
+                  {result.processedAt ? formatDate(result.processedAt) : "-"}
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleViewResult(result);
+                    }}
+                    className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                    title={t("results.viewResult")}
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
+                  {canDelete && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteResult(result);
+                      }}
+                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                      title={t("results.deleteResult")}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          /* ===== CARD VIEW ===== */
+          <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {results.map((result) => (
+              <div
+                key={result.id}
+                className="bg-white border border-gray-200 rounded-xl hover:shadow-md hover:border-gray-300 transition-all cursor-pointer group"
+                onDoubleClick={() => handleViewResult(result)}
+              >
+                {/* Card Header */}
+                <div className="p-4 border-b border-gray-100">
+                  <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                      <FileText className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-semibold text-gray-900 truncate">
+                        {result.title || "-"}
+                      </h3>
+                      <p className="text-xs text-gray-500 truncate mt-0.5">
+                        {result.templateName || result.templateId || "-"}
+                      </p>
+                    </div>
+                    <span
+                      className={`flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(
+                        result.status
+                      )}`}
+                    >
+                      {getStatusIcon(result.status)}
+                    </span>
+                  </div>
+                  
+                  {/* Summary Preview */}
+                  {result.summaryPreview && (
+                    <p className="text-xs text-gray-500 mt-2 line-clamp-2">
+                      {result.summaryPreview}
+                    </p>
+                  )}
+                </div>
+
+                {/* Card Body - Metadata */}
+                <div className="px-4 py-3 space-y-2">
+                  {/* Tags */}
+                  {result.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {result.tags.slice(0, 3).map((tag) => (
+                        <span
+                          key={tag}
+                          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700"
                         >
-                          <Eye className="h-4 w-4" />
-                        </button>
-                        {canDelete && (
-                          <button
-                            onClick={() => handleDeleteResult(result)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title={t("results.deleteResult")}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                          {tag}
+                        </span>
+                      ))}
+                      {result.tags.length > 3 && (
+                        <span className="text-xs text-gray-400">
+                          +{result.tags.length - 3}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Stats Row */}
+                  <div className="flex items-center justify-between text-xs text-gray-500">
+                    <div className="flex items-center gap-3">
+                      <span className="flex items-center gap-1">
+                        <BarChart3 className="h-3.5 w-3.5" />
+                        {formatConfidence(result.confidence)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3.5 w-3.5" />
+                        {formatDuration(result.audioDuration)}
+                      </span>
+                    </div>
+                    <span className="flex items-center gap-1">
+                      <Calendar className="h-3.5 w-3.5" />
+                      {result.processedAt ? formatDate(result.processedAt) : "-"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Card Footer - Actions */}
+                <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleViewResult(result);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    {t("results.viewResult")}
+                  </button>
+                  {canDelete && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteResult(result);
+                      }}
+                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                      title={t("results.deleteResult")}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -675,8 +855,8 @@ export default function ProcessingResultsTab() {
       >
         {viewingResult && (
           <div className="space-y-6 h-full flex flex-col">
-            {/* Status Badge */}
-            <div className="flex items-center gap-2">
+            {/* Status Badge & Actions */}
+            <div className="flex items-center justify-between gap-2">
               <span
                 className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusBadgeClass(
                   viewingResult.status
@@ -685,6 +865,68 @@ export default function ProcessingResultsTab() {
                 {getStatusIcon(viewingResult.status)}
                 {t(`results.${viewingResult.status}`)}
               </span>
+
+              {/* Edit and Export Buttons */}
+              <div className="flex items-center gap-2">
+                {/* Edit Button */}
+                {!loadingContent && resultContent && (
+                  <button
+                    onClick={handleEditClick}
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    <Edit className="h-4 w-4" />
+                    {t("results.edit", { defaultValue: "Edit" })}
+                  </button>
+                )}
+
+                {/* Export Dropdown */}
+                {!loadingContent && resultContent && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowExportMenu(!showExportMenu)}
+                      disabled={!!isExporting}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isExporting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          {t("results.exporting", { defaultValue: "Exporting..." })}
+                        </>
+                      ) : (
+                        <>
+                          <Download className="h-4 w-4" />
+                          {t("results.export", { defaultValue: "Export" })}
+                          <ChevronDown className="h-4 w-4" />
+                        </>
+                      )}
+                    </button>
+
+                    {/* Export Dropdown Menu */}
+                    {showExportMenu && (
+                      <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
+                        <button
+                          onClick={() => handleExport("markdown")}
+                          className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 first:rounded-t-lg"
+                        >
+                          {t("results.exportMarkdown", { defaultValue: "Download as Markdown" })}
+                        </button>
+                        <button
+                          onClick={() => handleExport("word")}
+                          className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          {t("results.exportWord", { defaultValue: "Download as Word" })}
+                        </button>
+                        <button
+                          onClick={() => handleExport("pdf")}
+                          className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 last:rounded-b-lg"
+                        >
+                          {t("results.exportPdf", { defaultValue: "Download as PDF" })}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Metadata */}
@@ -848,6 +1090,16 @@ export default function ProcessingResultsTab() {
           </div>
         )}
       </Modal>
+
+      {/* Edit Result Modal */}
+      {editingResult && (
+        <EditResultModal
+          result={editingResult}
+          isOpen={!!editingResult}
+          onClose={() => setEditingResult(null)}
+          onSave={handleSaveEdit}
+        />
+      )}
     </div>
   );
 }

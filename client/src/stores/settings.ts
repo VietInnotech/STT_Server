@@ -9,6 +9,7 @@ export type DateFormat =
   | "DD/MM/YYYY"
   | "MM/DD/YYYY"
   | "DD-MMM-YYYY";
+export type ViewMode = "list" | "card";
 
 interface SettingsState {
   // UI Settings
@@ -16,12 +17,16 @@ interface SettingsState {
   timeFormat: TimeFormat;
   itemsPerPage: number;
   language: string;
+  filesViewMode: ViewMode;
+  resultsViewMode: ViewMode;
 
   // Actions
   setDateFormat: (format: DateFormat) => void;
   setTimeFormat: (format: TimeFormat) => void;
   setItemsPerPage: (count: number) => void;
   setLanguage: (lang: string) => void;
+  setFilesViewMode: (mode: ViewMode) => void;
+  setResultsViewMode: (mode: ViewMode) => void;
 
   // Sync with backend
   loadFromServer: () => Promise<void>;
@@ -36,6 +41,8 @@ export const useSettingsStore = create<SettingsState>()(
       timeFormat: "24h",
       itemsPerPage: 50,
       language: "vi",
+      filesViewMode: "list",
+      resultsViewMode: "list",
 
       setDateFormat: (dateFormat) => {
         set({ dateFormat });
@@ -55,6 +62,16 @@ export const useSettingsStore = create<SettingsState>()(
       setLanguage: (language) => {
         set({ language });
         get().saveToServer();
+      },
+
+      setFilesViewMode: (filesViewMode) => {
+        set({ filesViewMode });
+        // View mode is stored locally only, no need to sync to server
+      },
+
+      setResultsViewMode: (resultsViewMode) => {
+        set({ resultsViewMode });
+        // View mode is stored locally only, no need to sync to server
       },
 
       loadFromServer: async () => {
@@ -103,6 +120,8 @@ export const useSettingsStore = create<SettingsState>()(
         timeFormat: state.timeFormat,
         itemsPerPage: state.itemsPerPage,
         language: state.language,
+        filesViewMode: state.filesViewMode,
+        resultsViewMode: state.resultsViewMode,
       }),
     }
   )

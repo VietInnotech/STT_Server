@@ -10,6 +10,8 @@ import {
   Loader2,
   RefreshCw,
   Share2,
+  List,
+  LayoutGrid,
 } from "lucide-react";
 import { filesApi, type FileItem } from "../lib/api";
 import { useSettingsStore } from "../stores/settings";
@@ -35,6 +37,8 @@ interface CombinedFile extends FileItem {
 export default function FilesPage() {
   const { t } = useTranslation("files");
   const itemsPerPage = useSettingsStore((s) => s.itemsPerPage);
+  const filesViewMode = useSettingsStore((s) => s.filesViewMode);
+  const setFilesViewMode = useSettingsStore((s) => s.setFilesViewMode);
   const { can } = usePermission();
   const canWrite = can(PERMISSIONS.FILES_WRITE);
   const canDelete = can(PERMISSIONS.FILES_DELETE);
@@ -366,6 +370,131 @@ export default function FilesPage() {
     }
   };
 
+  const handleOpenFile = async (file: CombinedFile) => {
+    try {
+      if ((file as any).isPair) {
+        setPairViewer(file);
+        setPairViewerLoading(true);
+        setPairViewerContent(null);
+        const summaryId = (file as any).summaryFileId;
+        const realtimeId = (file as any).realtimeFileId;
+        const [summaryResp, realtimeResp] = await Promise.all([
+          filesApi.getText(summaryId),
+          filesApi.getText(realtimeId),
+        ]);
+        let sumText = "";
+        let realText = "";
+        try {
+          sumText = await summaryResp.data.text();
+        } catch {
+          const url = URL.createObjectURL(summaryResp.data as Blob);
+          sumText = await fetch(url)
+            .then((r) => r.text())
+            .finally(() => URL.revokeObjectURL(url));
+        }
+        try {
+          realText = await realtimeResp.data.text();
+        } catch {
+          const url2 = URL.createObjectURL(realtimeResp.data as Blob);
+          realText = await fetch(url2)
+            .then((r) => r.text())
+            .finally(() => URL.revokeObjectURL(url2));
+        }
+        setPairViewerContent({
+          summary: sumText,
+          realtime: realText,
+        });
+        setPairViewerLoading(false);
+        return;
+      }
+
+      setFileViewer(file);
+      setFileViewerContent(null);
+      if (file.type === "audio") {
+        const resp = await filesApi.getAudio(file.id);
+        let blob = resp.data as Blob;
+        try {
+          const contentType =
+            (resp as any).headers?.["content-type"] || "";
+          if (contentType && blob.type !== contentType) {
+            blob = new Blob([blob], { type: contentType });
+          }
+        } catch {
+          // Ignore and use blob as-is
+        }
+        const url = URL.createObjectURL(blob);
+        setFileViewerContent({ audioUrl: url });
+      } else {
+        const resp = await filesApi.getText(file.id);
+        let text = "";
+        try {
+          text = await resp.data.text();
+        } catch {
+          const url = URL.createObjectURL(resp.data as Blob);
+          text = await fetch(url)
+            .then((r) => r.text())
+            .finally(() => URL.revokeObjectURL(url));
+        }
+        setFileViewerContent({ text });
+      }
+    } catch (err: any) {
+      console.error("Failed to open viewer", err);
+      const status = err?.response?.status;
+      if (status === 429) {
+        toast.error(t("tooManyRequests"));
+      } else {
+        toast.error(t("failedToOpenViewer"));
+      }
+      setPairViewer(null);
+      setPairViewerLoading(false);
+      setFileViewer(null);
+    }
+  };
+
+  const canCompareFile = (file: CombinedFile) => {
+    return Boolean(
+      (file as any).isPair ||
+        (file.type === "text" &&
+          (file as any).origin === "android" &&
+          ((file as any).androidSummary ||
+            (file as any).androidRealtime))
+    );
+  };
+
+  const handleCompareClick = async (file: CombinedFile) => {
+    if ((file as any).isPair) {
+      await handleOpenFile(file);
+      return;
+    }
+
+    try {
+      setCompareLoading(true);
+      setCompareFile(file);
+      setCompareTextContent(null);
+      const resp = await filesApi.getText(file.id);
+      let text = "";
+      try {
+        text = await resp.data.text();
+      } catch {
+        const url = window.URL.createObjectURL(new Blob([resp.data]));
+        text = await fetch(url)
+          .then((r) => r.text())
+          .finally(() => window.URL.revokeObjectURL(url));
+      }
+      setCompareTextContent(text);
+      setCompareLoading(false);
+    } catch (err: any) {
+      console.error("Failed to fetch text for compare", err);
+      if (err?.response?.status === 429) {
+        toast.error(t("tooManyRequests"));
+      } else {
+        toast.error(t("failedToFetchTextForCompare"));
+      }
+      setCompareLoading(false);
+      setCompareFile(null);
+    }
+  };
+
   const handleRevoke = async (fileId: string, sharedWithId: string) => {
     if (!confirm(t("revokeShareConfirm"))) return;
     try {
@@ -435,6 +564,31 @@ export default function FilesPage() {
     const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+  };
+
+  const getDeleteAfterLabel = (file: CombinedFile) => {
+    const share = (file as any)._share;
+    if (share && share.expiresAt) {
+      const expires = new Date(share.expiresAt);
+      const diffDays = Math.ceil(
+        (expires.getTime() - Date.now()) / (24 * 60 * 60 * 1000)
+      );
+      return { text: t("days", { count: diffDays }), muted: false };
+    }
+    const auto = (file as any).deleteAfterDays;
+    if (auto) {
+      return { text: t("days", { count: auto }), muted: false };
+    }
+    if (
+      settingsAutoDeleteDays !== undefined &&
+      settingsAutoDeleteDays !== null
+    ) {
+      return {
+        text: t("days", { count: settingsAutoDeleteDays }),
+        muted: false,
+      };
+    }
+    return { text: t("none"), muted: true };
   };
 
   // Apply pagination to filtered files
@@ -870,16 +1024,45 @@ export default function FilesPage() {
       {/* Files Tab Content */}
       {activeTab === "files" && (
         <>
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder={t("searchFiles")}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          {/* Search and View Toggle */}
+          <div className="flex gap-3 items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <input
+                type="text"
+                placeholder={t("searchFiles")}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            {/* View Toggle */}
+            <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setFilesViewMode("list")}
+                className={`p-2 transition-colors ${
+                  filesViewMode === "list"
+                    ? "bg-blue-600 text-white"
+                    : "bg-white text-gray-600 hover:bg-gray-100"
+                }`}
+                title={t("viewList")}
+                aria-label={t("viewList")}
+              >
+                <List className="h-5 w-5" />
+              </button>
+              <button
+                onClick={() => setFilesViewMode("card")}
+                className={`p-2 transition-colors ${
+                  filesViewMode === "card"
+                    ? "bg-blue-600 text-white"
+                    : "bg-white text-gray-600 hover:bg-gray-100"
+                }`}
+                title={t("viewCard")}
+                aria-label={t("viewCard")}
+              >
+                <LayoutGrid className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           {/* Files Table */}
@@ -893,368 +1076,268 @@ export default function FilesPage() {
                 {t("noFilesFound")}
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        {t("file")}
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        {t("size")}
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        {t("uploadedBy")}
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        {t("deleteAfter")}
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        {t("uploaded")}
-                      </th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        {t("actions")}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {paginatedFiles.map((file: CombinedFile) => (
-                      <tr
-                        key={file.id}
-                        className="hover:bg-gray-50"
-                        onDoubleClick={async () => {
-                          try {
-                            if ((file as any).isPair) {
-                              // Fetch both files and open split view
-                              setPairViewer(file);
-                              setPairViewerLoading(true);
-                              setPairViewerContent(null);
-                              const summaryId = (file as any).summaryFileId;
-                              const realtimeId = (file as any).realtimeFileId;
-                              const [summaryResp, realtimeResp] =
-                                await Promise.all([
-                                  filesApi.getText(summaryId),
-                                  filesApi.getText(realtimeId),
-                                ]);
-                              let sumText = "";
-                              let realText = "";
-                              try {
-                                sumText = await summaryResp.data.text();
-                              } catch {
-                                const url = URL.createObjectURL(
-                                  summaryResp.data as Blob
-                                );
-                                sumText = await fetch(url)
-                                  .then((r) => r.text())
-                                  .finally(() => URL.revokeObjectURL(url));
-                              }
-                              try {
-                                realText = await realtimeResp.data.text();
-                              } catch {
-                                const url2 = URL.createObjectURL(
-                                  realtimeResp.data as Blob
-                                );
-                                realText = await fetch(url2)
-                                  .then((r) => r.text())
-                                  .finally(() => URL.revokeObjectURL(url2));
-                              }
-                              setPairViewerContent({
-                                summary: sumText,
-                                realtime: realText,
-                              });
-                              setPairViewerLoading(false);
-                            } else {
-                              // Single file view (text or audio)
-                              setFileViewer(file);
-                              setFileViewerContent(null);
-                              if (file.type === "audio") {
-                                const resp = await filesApi.getAudio(file.id);
-                                // resp.data is a Blob. Ensure it has the right MIME type from headers.
-                                let blob = resp.data as Blob;
-                                try {
-                                  const contentType =
-                                    (resp as any).headers?.["content-type"] ||
-                                    "";
-                                  if (
-                                    contentType &&
-                                    blob.type !== contentType
-                                  ) {
-                                    // Wrap blob in new Blob with explicit content type preserved
-                                    blob = new Blob([blob], {
-                                      type: contentType,
-                                    });
-                                  }
-                                } catch (err) {
-                                  // ignore and fallback to blob as-is
-                                }
-                                const url = URL.createObjectURL(blob);
-                                setFileViewerContent({ audioUrl: url });
-                              } else {
-                                const resp = await filesApi.getText(file.id);
-                                let text = "";
-                                try {
-                                  text = await resp.data.text();
-                                } catch {
-                                  const url = URL.createObjectURL(
-                                    resp.data as Blob
-                                  );
-                                  text = await fetch(url)
-                                    .then((r) => r.text())
-                                    .finally(() => URL.revokeObjectURL(url));
-                                }
-                                setFileViewerContent({ text });
-                              }
-                            }
-                          } catch (err: any) {
-                            console.error("Failed to open viewer", err);
-                            const status = err?.response?.status;
-                            if (status === 429) {
-                              toast.error(t("tooManyRequests"));
-                            } else {
-                              toast.error(t("failedToOpenViewer"));
-                            }
-                            setPairViewer(null);
-                            setPairViewerLoading(false);
-                            setFileViewer(null);
-                          }
-                        }}
-                      >
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-3">
+              <>
+                {/* List View - Compact table-like rows */}
+                {filesViewMode === "list" && (
+                  <div className="divide-y divide-gray-100">
+                    {paginatedFiles.map((file: CombinedFile) => {
+                      const deleteLabel = getDeleteAfterLabel(file);
+                      return (
+                        <div
+                          key={file.id}
+                          className="group flex items-center gap-4 px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer"
+                          onClick={() => handleOpenFile(file)}
+                        >
+                          {/* File Icon */}
+                          <div className="flex-shrink-0">
                             {file.type === "audio" ? (
-                              <FileAudio className="h-5 w-5 text-blue-500" />
+                              <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                                <FileAudio className="h-5 w-5 text-blue-600" />
+                              </div>
                             ) : (
-                              <FileText className="h-5 w-5 text-gray-500" />
+                              <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <FileText className="h-5 w-5 text-gray-600" />
+                              </div>
                             )}
+                          </div>
+
+                          {/* File Info - Main content area */}
+                          <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-gray-900">
+                              <span className="text-sm font-medium text-gray-900 truncate">
                                 {file.filename}
                               </span>
-                              {/* Owner share indicator moved here */}
+                              {/* Badges */}
                               {(file as any)._ownerShares &&
                                 (file as any)._ownerShares.length > 0 && (
-                                  <div>
-                                    <button
-                                      onClick={() =>
-                                        setOwnerSharesModalFile(file)
-                                      }
-                                      className="text-xs text-white bg-indigo-600 px-2 py-1 rounded"
-                                      title={t("sharedWith", {
-                                        count: (file as any)._ownerShares
-                                          .length,
-                                      })}
-                                    >
-                                      {t("sharedWith", {
-                                        count: (file as any)._ownerShares
-                                          .length,
-                                      })}
-                                    </button>
-                                  </div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setOwnerSharesModalFile(file);
+                                    }}
+                                    className="text-xs text-white bg-indigo-600 px-1.5 py-0.5 rounded font-medium"
+                                  >
+                                    {t("sharedWith", {
+                                      count: (file as any)._ownerShares.length,
+                                    })}
+                                  </button>
                                 )}
-                              {/* Recipient shared indicator: if this file is shared with the current user */}
                               {(file as any)._share && (
-                                <span
-                                  title={`Shared by ${
-                                    (file as any)._share.sharedByName ||
-                                    usersMap[(file as any)._share.sharedById] ||
-                                    (file as any)._share.sharedById ||
-                                    t("unknown")
-                                  }`}
-                                  className="ml-2 text-xs text-white bg-green-600 px-2 py-1 rounded"
-                                >
+                                <span className="text-xs text-white bg-green-600 px-1.5 py-0.5 rounded font-medium">
                                   {t("shared")}
                                 </span>
                               )}
                             </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {formatBytes(file.fileSize)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {file.uploadedBy ? (
-                            <span className="text-gray-900 font-medium">
-                              {file.uploadedBy.fullName ||
-                                file.uploadedBy.username}
-                            </span>
-                          ) : (
-                            t("na")
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {/* Show auto-delete days or share expiry if present */}
-                          {(() => {
-                            const auto = (file as any).deleteAfterDays;
-                            const share = (file as any)._share;
-                            if (share && share.expiresAt) {
-                              const expires = new Date(share.expiresAt);
-                              const diffDays = Math.ceil(
-                                (expires.getTime() - Date.now()) /
-                                  (24 * 60 * 60 * 1000)
-                              );
-                              return (
-                                <span className="text-sm text-gray-700">
-                                  {t("days", { count: diffDays })}
-                                </span>
-                              );
-                            }
-                            if (auto) {
-                              return (
-                                <span className="text-sm text-gray-700">
-                                  {t("days", { count: auto })}
-                                </span>
-                              );
-                            }
-                            // If file has no per-file delete setting, show user's/settings auto-delete if available
-                            if (
-                              settingsAutoDeleteDays !== undefined &&
-                              settingsAutoDeleteDays !== null
-                            ) {
-                              return (
-                                <span className="text-sm text-gray-700">
-                                  {t("days", { count: settingsAutoDeleteDays })}
-                                </span>
-                              );
-                            }
-                            return (
-                              <span className="text-sm text-gray-400">
-                                {t("none")}
+                            <div className="flex items-center gap-4 mt-0.5 text-xs text-gray-500">
+                              <span>{formatBytes(file.fileSize)}</span>
+                              <span className="hidden sm:inline">•</span>
+                              <span className="hidden sm:inline">
+                                {file.uploadedBy
+                                  ? file.uploadedBy.fullName ||
+                                    file.uploadedBy.username
+                                  : t("na")}
                               </span>
-                            );
-                          })()}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {formatDate(file.uploadedAt)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                          <div className="flex items-center justify-end gap-2">
+                              <span className="hidden md:inline">•</span>
+                              <span className="hidden md:inline">
+                                {formatDate(file.uploadedAt)}
+                              </span>
+                              <span className="hidden lg:inline">•</span>
+                              <span
+                                className={`hidden lg:inline ${
+                                  deleteLabel.muted
+                                    ? "text-gray-400"
+                                    : "text-gray-500"
+                                }`}
+                              >
+                                {deleteLabel.text}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
-                              onClick={() => handleDownload(file)}
-                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownload(file);
+                              }}
+                              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title={t("common:download")}
                             >
                               <Download className="h-4 w-4" />
                             </button>
                             {canDelete && (
                               <button
-                                onClick={() => handleDelete(file)}
-                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(file);
+                                }}
+                                className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title={t("common:delete")}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </button>
                             )}
-                            {/* If pair row or text file from android, show Compare action */}
-                            {(file as any).isPair ||
-                              (file.type === "text" &&
-                                (file as any).origin === "android" &&
-                                ((file as any).androidSummary ||
-                                  (file as any).androidRealtime) && (
-                                  <button
-                                    onClick={async () => {
-                                      try {
-                                        // If it's a pair, open split view
-                                        if ((file as any).isPair) {
-                                          setPairViewer(file);
-                                          setPairViewerLoading(true);
-                                          setPairViewerContent(null);
-                                          const summaryId = (file as any)
-                                            .summaryFileId;
-                                          const realtimeId = (file as any)
-                                            .realtimeFileId;
-                                          const [summaryResp, realtimeResp] =
-                                            await Promise.all([
-                                              filesApi.getText(summaryId),
-                                              filesApi.getText(realtimeId),
-                                            ]);
-                                          let sumText = "";
-                                          let realText = "";
-                                          try {
-                                            sumText =
-                                              await summaryResp.data.text();
-                                          } catch {
-                                            const url = URL.createObjectURL(
-                                              summaryResp.data as Blob
-                                            );
-                                            sumText = await fetch(url)
-                                              .then((r) => r.text())
-                                              .finally(() =>
-                                                URL.revokeObjectURL(url)
-                                              );
-                                          }
-                                          try {
-                                            realText =
-                                              await realtimeResp.data.text();
-                                          } catch {
-                                            const url2 = URL.createObjectURL(
-                                              realtimeResp.data as Blob
-                                            );
-                                            realText = await fetch(url2)
-                                              .then((r) => r.text())
-                                              .finally(() =>
-                                                URL.revokeObjectURL(url2)
-                                              );
-                                          }
-                                          setPairViewerContent({
-                                            summary: sumText,
-                                            realtime: realText,
-                                          });
-                                          setPairViewerLoading(false);
-                                          return;
-                                        }
-                                        setCompareLoading(true);
-                                        setCompareFile(file);
-                                        setCompareTextContent(null);
-                                        // fetch decrypted text content
-                                        const resp = await filesApi.getText(
-                                          file.id
-                                        );
-                                        // resp.data is a Blob
-                                        let text = "";
-                                        try {
-                                          text = await resp.data.text();
-                                        } catch (err) {
-                                          // fallback: create object URL and fetch
-                                          const url =
-                                            window.URL.createObjectURL(
-                                              new Blob([resp.data])
-                                            );
-                                          text = await fetch(url)
-                                            .then((r) => r.text())
-                                            .finally(() =>
-                                              window.URL.revokeObjectURL(url)
-                                            );
-                                        }
-                                        setCompareTextContent(text);
-                                        setCompareLoading(false);
-                                        // open modal
-                                        setCompareFile(file);
-                                      } catch (err: any) {
-                                        console.error(
-                                          "Failed to fetch text for compare",
-                                          err
-                                        );
-                                        if (err?.response?.status === 429) {
-                                          toast.error(t("tooManyRequests"));
-                                        } else {
-                                          toast.error(
-                                            t("failedToFetchTextForCompare")
-                                          );
-                                        }
-                                        setCompareLoading(false);
-                                        setCompareFile(null);
-                                      }
-                                    }}
-                                    className="px-3 py-2 text-sm bg-yellow-50 text-yellow-700 rounded"
-                                  >
-                                    {t("compare")}
-                                  </button>
-                                ))}
+                            {canCompareFile(file) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCompareClick(file);
+                                }}
+                                className="px-2 py-1.5 text-xs font-medium bg-yellow-50 text-yellow-700 rounded-lg hover:bg-yellow-100 transition-colors"
+                              >
+                                {t("compare")}
+                              </button>
+                            )}
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Card View - Grid of compact cards */}
+                {filesViewMode === "card" && (
+                  <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {paginatedFiles.map((file: CombinedFile) => {
+                      const deleteLabel = getDeleteAfterLabel(file);
+                      return (
+                        <div
+                          key={file.id}
+                          className="group bg-white border border-gray-200 rounded-lg hover:shadow-md hover:border-gray-300 transition-all cursor-pointer"
+                          onClick={() => handleOpenFile(file)}
+                        >
+                          {/* Card Header with Icon */}
+                          <div className="px-4 pt-4 pb-3 flex items-start gap-3">
+                            <div className="flex-shrink-0">
+                              {file.type === "audio" ? (
+                                <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                                  <FileAudio className="h-5 w-5 text-blue-600" />
+                                </div>
+                              ) : (
+                                <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center">
+                                  <FileText className="h-5 w-5 text-gray-600" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h3
+                                className="text-sm font-medium text-gray-900 truncate"
+                                title={file.filename}
+                              >
+                                {file.filename}
+                              </h3>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                {formatBytes(file.fileSize)}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Card Body - Metadata */}
+                          <div className="px-4 pb-3 space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-500">
+                                {t("uploadedBy")}
+                              </span>
+                              <span className="text-gray-700 font-medium truncate ml-2">
+                                {file.uploadedBy
+                                  ? file.uploadedBy.fullName ||
+                                    file.uploadedBy.username
+                                  : t("na")}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-500">
+                                {t("uploaded")}
+                              </span>
+                              <span className="text-gray-700">
+                                {formatDate(file.uploadedAt)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-500">
+                                {t("deleteAfter")}
+                              </span>
+                              <span
+                                className={
+                                  deleteLabel.muted
+                                    ? "text-gray-400"
+                                    : "text-gray-700"
+                                }
+                              >
+                                {deleteLabel.text}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Badges */}
+                          {((file as any)._ownerShares?.length > 0 ||
+                            (file as any)._share) && (
+                            <div className="px-4 pb-3 flex flex-wrap gap-1.5">
+                              {(file as any)._ownerShares &&
+                                (file as any)._ownerShares.length > 0 && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setOwnerSharesModalFile(file);
+                                    }}
+                                    className="text-xs text-white bg-indigo-600 px-2 py-1 rounded font-medium hover:bg-indigo-700 transition-colors"
+                                  >
+                                    {t("sharedWith", {
+                                      count: (file as any)._ownerShares.length,
+                                    })}
+                                  </button>
+                                )}
+                              {(file as any)._share && (
+                                <span className="text-xs text-white bg-green-600 px-2 py-1 rounded font-medium">
+                                  {t("shared")}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Card Actions */}
+                          <div className="px-4 pb-3 pt-1 border-t border-gray-100 flex items-center justify-end gap-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownload(file);
+                              }}
+                              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title={t("common:download")}
+                            >
+                              <Download className="h-4 w-4" />
+                            </button>
+                            {canDelete && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(file);
+                                }}
+                                className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title={t("common:delete")}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
+                            {canCompareFile(file) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCompareClick(file);
+                                }}
+                                className="px-2 py-1 text-xs font-medium bg-yellow-50 text-yellow-700 rounded-lg hover:bg-yellow-100 transition-colors"
+                              >
+                                {t("compare")}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
             {!loading && filteredFiles.length > 0 && (
               <Pagination

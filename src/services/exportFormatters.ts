@@ -1,0 +1,603 @@
+import type { ProcessingResult } from "@prisma/client";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, BorderStyle } from "docx";
+import PDFDocument from "pdfkit";
+import { Readable } from "stream";
+
+/**
+ * Export Formatter Interface
+ * Defines the contract for all export formatters
+ */
+export interface ExportFormatter {
+  format(
+    result: ProcessingResult,
+    content: {
+      summary: string;
+      summaryData: any;
+      transcript: string;
+    }
+  ): string | Buffer | Promise<Buffer>;
+
+  mimeType: string;
+  fileExtension: string;
+}
+
+/**
+ * PDF Formatter Interface (uses streaming)
+ */
+export interface PDFStreamFormatter {
+  createPDFStream(
+    result: ProcessingResult,
+    content: {
+      summary: string;
+      summaryData: any;
+      transcript: string;
+    }
+  ): Readable;
+
+  mimeType: string;
+  fileExtension: string;
+}
+
+/**
+ * Escape special Markdown characters
+ */
+function escapeMarkdown(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/\*/g, "\\*")
+    .replace(/_/g, "\\_")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]")
+    .replace(/`/g, "\\`")
+    .replace(/~/g, "\\~")
+    .replace(/#/g, "\\#");
+}
+
+/**
+ * Format date to readable string
+ */
+function formatDate(date: Date | null): string {
+  if (!date) return "N/A";
+  return new Date(date).toLocaleString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * Markdown Formatter
+ * Exports processing results as Markdown (.md)
+ */
+export class MarkdownFormatter implements ExportFormatter {
+  mimeType = "text/markdown; charset=utf-8";
+  fileExtension = "md";
+
+  format(
+    result: ProcessingResult,
+    content: {
+      summary: string;
+      summaryData: any;
+      transcript: string;
+    }
+  ): string {
+    const lines: string[] = [];
+
+    // Title
+    lines.push(`# ${escapeMarkdown(result.title || "Untitled Result")}`);
+    lines.push("");
+
+    // Metadata
+    lines.push("## Metadata");
+    lines.push("");
+    lines.push(`**Processed:** ${formatDate(result.processedAt)}`);
+    if (result.templateName) {
+      lines.push(`**Template:** ${escapeMarkdown(result.templateName)}`);
+    }
+    if (result.confidence !== null) {
+      lines.push(`**Confidence:** ${(result.confidence * 100).toFixed(1)}%`);
+    }
+    if (result.audioDuration !== null) {
+      lines.push(`**Audio Duration:** ${result.audioDuration}s`);
+    }
+    if (result.processingTime !== null) {
+      lines.push(`**Processing Time:** ${result.processingTime}s`);
+    }
+    lines.push("");
+
+    // Tags
+    if (content.summaryData?.tags && Array.isArray(content.summaryData.tags)) {
+      lines.push("## Tags");
+      lines.push("");
+      content.summaryData.tags.forEach((tag: string) => {
+        lines.push(`- ${escapeMarkdown(tag)}`);
+      });
+      lines.push("");
+    }
+
+    // Summary
+    if (content.summary) {
+      lines.push("## Summary");
+      lines.push("");
+      lines.push(content.summary);
+      lines.push("");
+    }
+
+    // Key Topics
+    if (
+      content.summaryData?.key_topics &&
+      Array.isArray(content.summaryData.key_topics) &&
+      content.summaryData.key_topics.length > 0
+    ) {
+      lines.push("## Key Topics");
+      lines.push("");
+      content.summaryData.key_topics.forEach((topic: string) => {
+        lines.push(`- ${topic}`);
+      });
+      lines.push("");
+    }
+
+    // Action Items
+    if (
+      content.summaryData?.action_items &&
+      Array.isArray(content.summaryData.action_items) &&
+      content.summaryData.action_items.length > 0
+    ) {
+      lines.push("## Action Items");
+      lines.push("");
+      content.summaryData.action_items.forEach((item: string) => {
+        lines.push(`- [ ] ${item}`);
+      });
+      lines.push("");
+    }
+
+    // Attendees
+    if (
+      content.summaryData?.attendees &&
+      Array.isArray(content.summaryData.attendees) &&
+      content.summaryData.attendees.length > 0
+    ) {
+      lines.push("## Attendees");
+      lines.push("");
+      content.summaryData.attendees.forEach((attendee: string) => {
+        lines.push(`- ${attendee}`);
+      });
+      lines.push("");
+    }
+
+    // Decisions
+    if (
+      content.summaryData?.decisions &&
+      Array.isArray(content.summaryData.decisions) &&
+      content.summaryData.decisions.length > 0
+    ) {
+      lines.push("## Decisions");
+      lines.push("");
+      content.summaryData.decisions.forEach((decision: string) => {
+        lines.push(`- ${decision}`);
+      });
+      lines.push("");
+    }
+
+    // Transcript
+    if (content.transcript) {
+      lines.push("## Transcript");
+      lines.push("");
+      lines.push("```");
+      lines.push(content.transcript);
+      lines.push("```");
+      lines.push("");
+    }
+
+    // Footer
+    lines.push("---");
+    lines.push("");
+    lines.push("_Generated by UNV AI Report Server_");
+
+    // Join with proper line endings and normalize to NFC
+    return lines.join("\n").normalize("NFC");
+  }
+}
+
+/**
+ * Sanitize filename to remove unsafe characters
+ */
+export function sanitizeFilename(filename: string): string {
+  return filename
+    .replace(/[^a-zA-Z0-9\s\-_()]/g, "")
+    .replace(/\s+/g, "_")
+    .slice(0, 200);
+}
+
+/**
+ * Word Document Formatter
+ * Exports processing results as Word document (.docx)
+ */
+export class WordFormatter implements ExportFormatter {
+  mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  fileExtension = "docx";
+
+  async format(
+    result: ProcessingResult,
+    content: {
+      summary: string;
+      summaryData: any;
+      transcript: string;
+    }
+  ): Promise<Buffer> {
+    const sections: any[] = [];
+
+    // Title
+    sections.push(
+      new Paragraph({
+        text: result.title || "Untitled Result",
+        heading: HeadingLevel.HEADING_1,
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 300 },
+      })
+    );
+
+    // Metadata Table
+    const metadataRows: TableRow[] = [];
+
+    if (result.processedAt) {
+      metadataRows.push(
+        new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ text: "Processed", bold: true })] }),
+            new TableCell({ children: [new Paragraph(formatDate(result.processedAt))] }),
+          ],
+        })
+      );
+    }
+
+    if (result.templateName) {
+      metadataRows.push(
+        new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ text: "Template", bold: true })] }),
+            new TableCell({ children: [new Paragraph(result.templateName)] }),
+          ],
+        })
+      );
+    }
+
+    if (result.confidence !== null) {
+      metadataRows.push(
+        new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ text: "Confidence", bold: true })] }),
+            new TableCell({ children: [new Paragraph(`${(result.confidence * 100).toFixed(1)}%`)] }),
+          ],
+        })
+      );
+    }
+
+    if (result.audioDuration !== null) {
+      metadataRows.push(
+        new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ text: "Audio Duration", bold: true })] }),
+            new TableCell({ children: [new Paragraph(`${result.audioDuration}s`)] }),
+          ],
+        })
+      );
+    }
+
+    if (metadataRows.length > 0) {
+      sections.push(
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: metadataRows,
+        })
+      );
+      sections.push(new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
+
+    // Tags
+    if (content.summaryData?.tags && Array.isArray(content.summaryData.tags) && content.summaryData.tags.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: "Tags",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 200, after: 100 },
+        })
+      );
+
+      const tagsText = content.summaryData.tags.join(", ");
+      sections.push(
+        new Paragraph({
+          text: tagsText,
+          spacing: { after: 200 },
+        })
+      );
+    }
+
+    // Summary
+    if (content.summary) {
+      sections.push(
+        new Paragraph({
+          text: "Summary",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 200, after: 100 },
+        })
+      );
+      sections.push(
+        new Paragraph({
+          text: content.summary,
+          spacing: { after: 200 },
+        })
+      );
+    }
+
+    // Key Topics
+    if (content.summaryData?.key_topics && Array.isArray(content.summaryData.key_topics) && content.summaryData.key_topics.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: "Key Topics",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 200, after: 100 },
+        })
+      );
+      content.summaryData.key_topics.forEach((topic: string) => {
+        sections.push(
+          new Paragraph({
+            text: topic,
+            bullet: { level: 0 },
+          })
+        );
+      });
+      sections.push(new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
+
+    // Action Items
+    if (content.summaryData?.action_items && Array.isArray(content.summaryData.action_items) && content.summaryData.action_items.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: "Action Items",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 200, after: 100 },
+        })
+      );
+      content.summaryData.action_items.forEach((item: string, index: number) => {
+        sections.push(
+          new Paragraph({
+            text: item,
+            numbering: { reference: "action-items", level: 0 },
+          })
+        );
+      });
+      sections.push(new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
+
+    // Attendees
+    if (content.summaryData?.attendees && Array.isArray(content.summaryData.attendees) && content.summaryData.attendees.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: "Attendees",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 200, after: 100 },
+        })
+      );
+      content.summaryData.attendees.forEach((attendee: string) => {
+        sections.push(
+          new Paragraph({
+            text: attendee,
+            bullet: { level: 0 },
+          })
+        );
+      });
+      sections.push(new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
+
+    // Decisions
+    if (content.summaryData?.decisions && Array.isArray(content.summaryData.decisions) && content.summaryData.decisions.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: "Decisions",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 200, after: 100 },
+        })
+      );
+      content.summaryData.decisions.forEach((decision: string) => {
+        sections.push(
+          new Paragraph({
+            text: decision,
+            bullet: { level: 0 },
+          })
+        );
+      });
+      sections.push(new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
+
+    // Transcript
+    if (content.transcript) {
+      sections.push(
+        new Paragraph({
+          text: "Transcript",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 200, after: 100 },
+        })
+      );
+
+      // Split transcript into paragraphs for better readability
+      const transcriptLines = content.transcript.split("\n");
+      transcriptLines.forEach((line) => {
+        sections.push(
+          new Paragraph({
+            text: line,
+            spacing: { after: 50 },
+          })
+        );
+      });
+    }
+
+    // Create document
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children: sections,
+        },
+      ],
+    });
+
+    // Generate buffer
+    const buffer = await Packer.toBuffer(doc);
+    return buffer;
+  }
+}
+
+/**
+ * PDF Formatter
+ * Exports processing results as PDF (.pdf)
+ */
+export class PDFFormatter implements PDFStreamFormatter {
+  mimeType = "application/pdf";
+  fileExtension = "pdf";
+
+  createPDFStream(
+    result: ProcessingResult,
+    content: {
+      summary: string;
+      summaryData: any;
+      transcript: string;
+    }
+  ): Readable {
+    const doc = new PDFDocument({
+      size: "LETTER",
+      margins: { top: 50, bottom: 50, left: 50, right: 50 },
+    });
+
+    const pageWidth = 612; // Letter width in points
+    const marginLeft = 50;
+    const marginRight = 50;
+    const contentWidth = pageWidth - marginLeft - marginRight;
+
+    let currentY = doc.y;
+
+    // Title
+    doc
+      .fontSize(20)
+      .font("Helvetica-Bold")
+      .text(result.title || "Untitled Result", marginLeft, currentY, {
+        width: contentWidth,
+        align: "center",
+      });
+    doc.moveDown(1);
+
+    // Metadata Section
+    doc.fontSize(12).font("Helvetica-Bold").text("Metadata", { underline: true });
+    doc.moveDown(0.5);
+
+    doc.fontSize(10).font("Helvetica");
+    if (result.processedAt) {
+      doc.text(`Processed: ${formatDate(result.processedAt)}`);
+    }
+    if (result.templateName) {
+      doc.text(`Template: ${result.templateName}`);
+    }
+    if (result.confidence !== null) {
+      doc.text(`Confidence: ${(result.confidence * 100).toFixed(1)}%`);
+    }
+    if (result.audioDuration !== null) {
+      doc.text(`Audio Duration: ${result.audioDuration}s`);
+    }
+    if (result.processingTime !== null) {
+      doc.text(`Processing Time: ${result.processingTime}s`);
+    }
+    doc.moveDown(1);
+
+    // Tags
+    if (content.summaryData?.tags && Array.isArray(content.summaryData.tags) && content.summaryData.tags.length > 0) {
+      doc.fontSize(12).font("Helvetica-Bold").text("Tags", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(10).font("Helvetica");
+      doc.text(content.summaryData.tags.join(", "));
+      doc.moveDown(1);
+    }
+
+    // Summary
+    if (content.summary) {
+      doc.fontSize(12).font("Helvetica-Bold").text("Summary", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(10).font("Helvetica");
+      doc.text(content.summary, { align: "justify" });
+      doc.moveDown(1);
+    }
+
+    // Key Topics
+    if (content.summaryData?.key_topics && Array.isArray(content.summaryData.key_topics) && content.summaryData.key_topics.length > 0) {
+      doc.fontSize(12).font("Helvetica-Bold").text("Key Topics", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(10).font("Helvetica");
+      content.summaryData.key_topics.forEach((topic: string) => {
+        doc.text(`• ${topic}`, { indent: 20 });
+      });
+      doc.moveDown(1);
+    }
+
+    // Action Items
+    if (content.summaryData?.action_items && Array.isArray(content.summaryData.action_items) && content.summaryData.action_items.length > 0) {
+      doc.fontSize(12).font("Helvetica-Bold").text("Action Items", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(10).font("Helvetica");
+      content.summaryData.action_items.forEach((item: string, index: number) => {
+        doc.text(`${index + 1}. ${item}`, { indent: 20 });
+      });
+      doc.moveDown(1);
+    }
+
+    // Attendees
+    if (content.summaryData?.attendees && Array.isArray(content.summaryData.attendees) && content.summaryData.attendees.length > 0) {
+      doc.fontSize(12).font("Helvetica-Bold").text("Attendees", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(10).font("Helvetica");
+      content.summaryData.attendees.forEach((attendee: string) => {
+        doc.text(`• ${attendee}`, { indent: 20 });
+      });
+      doc.moveDown(1);
+    }
+
+    // Decisions
+    if (content.summaryData?.decisions && Array.isArray(content.summaryData.decisions) && content.summaryData.decisions.length > 0) {
+      doc.fontSize(12).font("Helvetica-Bold").text("Decisions", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(10).font("Helvetica");
+      content.summaryData.decisions.forEach((decision: string) => {
+        doc.text(`• ${decision}`, { indent: 20 });
+      });
+      doc.moveDown(1);
+    }
+
+    // Transcript
+    if (content.transcript) {
+      doc.fontSize(12).font("Helvetica-Bold").text("Transcript", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(9).font("Courier");
+      doc.text(content.transcript);
+      doc.moveDown(1);
+    }
+
+    // Footer
+    const pageCount = doc.bufferedPageRange().count;
+    for (let i = 0; i < pageCount; i++) {
+      doc.switchToPage(i);
+      doc
+        .fontSize(8)
+        .font("Helvetica")
+        .text(
+          `Page ${i + 1} of ${pageCount}`,
+          marginLeft,
+          doc.page.height - 30,
+          { align: "center", width: contentWidth }
+        );
+    }
+
+    doc.end();
+
+    return doc as unknown as Readable;
+  }
+}

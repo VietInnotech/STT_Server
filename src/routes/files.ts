@@ -3329,6 +3329,519 @@ router.get(
   }
 );
 
+/**
+ * @swagger
+ * /api/files/results/{id}:
+ *   put:
+ *     summary: Update processing result
+ *     description: Update editable fields of a processing result. Re-encrypts content on save.
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Processing result ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               summary:
+ *                 type: string
+ *               transcript:
+ *                 type: string
+ *               summaryData:
+ *                 type: object
+ *               tags:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Result updated successfully
+ *       403:
+ *         description: Forbidden - not owner or admin
+ *       404:
+ *         description: Result not found
+ */
+router.put(
+  "/results/:id",
+  requirePermission(PERMISSIONS.FILES_READ),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const { id } = req.params;
+      const { title, summary, transcript, summaryData, tags } = req.body;
+
+      // 1. Fetch result and validate ownership
+      const result = await prisma.processingResult.findUnique({
+        where: { id },
+        include: { tags: true },
+      });
+
+      if (!result) {
+        return res.status(404).json({ error: "Processing result not found" });
+      }
+
+      const isAdmin = req.user?.roleName === "admin";
+      const isOwner = result.uploadedById === req.user?.userId;
+
+      if (!isAdmin && !isOwner) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      // 2. Prepare update data
+      const updateData: any = {};
+      const updatedFields: string[] = [];
+
+      if (title !== undefined) {
+        updateData.title = title;
+        updatedFields.push("title");
+      }
+
+      if (summary !== undefined) {
+        const { encrypted, iv } = encrypt(summary);
+        updateData.summaryData = encrypted;
+        updateData.summaryIv = iv;
+        updateData.summaryPreview = summary.slice(0, 200);
+        updatedFields.push("summary");
+      }
+
+      if (transcript !== undefined) {
+        const { encrypted, iv } = encrypt(transcript);
+        updateData.transcriptData = encrypted;
+        updateData.transcriptIv = iv;
+        updatedFields.push("transcript");
+      }
+
+      if (summaryData !== undefined) {
+        const summaryStr = JSON.stringify(summaryData);
+        const { encrypted, iv } = encrypt(summaryStr);
+        updateData.summaryData = encrypted;
+        updateData.summaryIv = iv;
+        updatedFields.push("summaryData");
+      }
+
+      // 3. Sync tags
+      if (Array.isArray(tags)) {
+        // Delete existing tags
+        await prisma.processingResultTag.deleteMany({
+          where: { processingResultId: id },
+        });
+
+        // Create or find tags and link them
+        for (const tagName of tags) {
+          const tag = await prisma.tag.upsert({
+            where: { name: tagName.toLowerCase() },
+            update: {},
+            create: { name: tagName.toLowerCase() },
+          });
+
+          await prisma.processingResultTag.create({
+            data: {
+              processingResultId: id,
+              tagId: tag.id,
+            },
+          });
+        }
+        updatedFields.push("tags");
+      }
+
+      // 4. Update result
+      const updated = await prisma.processingResult.update({
+        where: { id },
+        data: updateData,
+      });
+
+      // 5. Create audit log
+      await prisma.auditLog.create({
+        data: {
+          userId: req.user?.userId,
+          action: "files.result_update",
+          resource: "processing_result",
+          resourceId: id,
+          details: { updatedFields },
+          ipAddress: req.ip,
+          userAgent: req.headers["user-agent"],
+          success: true,
+        },
+      });
+
+      logger.info("Processing result updated", {
+        resultId: id,
+        userId: req.user?.userId,
+        updatedFields,
+      });
+
+      return res.json({ success: true, result: updated });
+    } catch (error) {
+      logger.error("Error updating processing result:", error);
+      return res.status(500).json({ error: "Failed to update result" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/files/results/{id}/markdown:
+ *   get:
+ *     summary: Export processing result as Markdown
+ *     description: Download a processing result in Markdown format
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Processing result ID
+ *     responses:
+ *       200:
+ *         description: Markdown file
+ *         content:
+ *           text/markdown:
+ *             schema:
+ *               type: string
+ *       403:
+ *         description: Forbidden - not owner or admin
+ *       404:
+ *         description: Result not found
+ */
+router.get(
+  "/results/:id/markdown",
+  requirePermission(PERMISSIONS.FILES_READ),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const { id } = req.params;
+
+      // 1. Fetch result and validate ownership
+      const result = await prisma.processingResult.findUnique({
+        where: { id },
+        include: {
+          tags: {
+            include: { tag: true },
+          },
+        },
+      });
+
+      if (!result) {
+        return res.status(404).json({ error: "Processing result not found" });
+      }
+
+      const isAdmin = req.user?.roleName === "admin";
+      const isOwner = result.uploadedById === req.user?.userId;
+
+      if (!isAdmin && !isOwner) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      // 2. Decrypt content
+      const summary = result.summaryData && result.summaryIv
+        ? decrypt(result.summaryData, result.summaryIv)
+        : "";
+
+      const transcript = result.transcriptData && result.transcriptIv
+        ? decrypt(result.transcriptData, result.transcriptIv)
+        : "";
+
+      let summaryData: any = {};
+      try {
+        summaryData = summary ? JSON.parse(summary) : {};
+      } catch {
+        summaryData = {};
+      }
+
+      // Add tags to summaryData
+      if (result.tags && result.tags.length > 0) {
+        summaryData.tags = result.tags.map((t) => t.tag.name);
+      }
+
+      // 3. Format as Markdown
+      const { MarkdownFormatter, sanitizeFilename } = await import("../services/exportFormatters");
+      const formatter = new MarkdownFormatter();
+      const markdown = formatter.format(result, {
+        summary,
+        summaryData,
+        transcript,
+      });
+
+      // 4. Send with headers
+      const filename = sanitizeFilename(result.title || "result") + ".md";
+      res.setHeader("Content-Type", formatter.mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+      // 5. Create audit log (async)
+      prisma.auditLog
+        .create({
+          data: {
+            userId: req.user?.userId,
+            action: "files.result_export",
+            resource: "processing_result",
+            resourceId: id,
+            details: { format: "markdown" },
+            ipAddress: req.ip,
+            userAgent: req.headers["user-agent"],
+            success: true,
+          },
+        })
+        .catch((err) => {
+          logger.error("Failed to create audit log for export", { error: err });
+        });
+
+      return res.send(markdown);
+    } catch (error) {
+      logger.error("Error exporting to Markdown:", error);
+      return res.status(500).json({ error: "Failed to export result" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/files/results/{id}/word:
+ *   get:
+ *     summary: Export processing result as Word document
+ *     description: Download a processing result in Word (.docx) format
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Processing result ID
+ *     responses:
+ *       200:
+ *         description: Word document file
+ *         content:
+ *           application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       403:
+ *         description: Forbidden - not owner or admin
+ *       404:
+ *         description: Result not found
+ */
+router.get(
+  "/results/:id/word",
+  requirePermission(PERMISSIONS.FILES_READ),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const { id } = req.params;
+
+      // 1. Fetch result and validate ownership
+      const result = await prisma.processingResult.findUnique({
+        where: { id },
+        include: {
+          tags: {
+            include: { tag: true },
+          },
+        },
+      });
+
+      if (!result) {
+        return res.status(404).json({ error: "Processing result not found" });
+      }
+
+      const isAdmin = req.user?.roleName === "admin";
+      const isOwner = result.uploadedById === req.user?.userId;
+
+      if (!isAdmin && !isOwner) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      // 2. Decrypt content
+      const summary = result.summaryData && result.summaryIv
+        ? decrypt(result.summaryData, result.summaryIv)
+        : "";
+
+      const transcript = result.transcriptData && result.transcriptIv
+        ? decrypt(result.transcriptData, result.transcriptIv)
+        : "";
+
+      let summaryData: any = {};
+      try {
+        summaryData = summary ? JSON.parse(summary) : {};
+      } catch {
+        summaryData = {};
+      }
+
+      // Add tags to summaryData
+      if (result.tags && result.tags.length > 0) {
+        summaryData.tags = result.tags.map((t) => t.tag.name);
+      }
+
+      // 3. Format as Word document
+      const { WordFormatter, sanitizeFilename } = await import("../services/exportFormatters");
+      const formatter = new WordFormatter();
+      const buffer = await formatter.format(result, {
+        summary,
+        summaryData,
+        transcript,
+      });
+
+      // 4. Send with headers
+      const filename = sanitizeFilename(result.title || "result") + ".docx";
+      res.setHeader("Content-Type", formatter.mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Length", buffer.length);
+
+      // 5. Create audit log (async)
+      prisma.auditLog
+        .create({
+          data: {
+            userId: req.user?.userId,
+            action: "files.result_export",
+            resource: "processing_result",
+            resourceId: id,
+            details: { format: "word" },
+            ipAddress: req.ip,
+            userAgent: req.headers["user-agent"],
+            success: true,
+          },
+        })
+        .catch((err) => {
+          logger.error("Failed to create audit log for export", { error: err });
+        });
+
+      return res.send(buffer);
+    } catch (error) {
+      logger.error("Error exporting to Word:", error);
+      return res.status(500).json({ error: "Failed to export result" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/files/results/{id}/pdf:
+ *   get:
+ *     summary: Export processing result as PDF
+ *     description: Download a processing result in PDF format
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Processing result ID
+ *     responses:
+ *       200:
+ *         description: PDF file
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       403:
+ *         description: Forbidden - not owner or admin
+ *       404:
+ *         description: Result not found
+ */
+router.get(
+  "/results/:id/pdf",
+  requirePermission(PERMISSIONS.FILES_READ),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const { id } = req.params;
+
+      // 1. Fetch result and validate ownership
+      const result = await prisma.processingResult.findUnique({
+        where: { id },
+        include: {
+          tags: {
+            include: { tag: true },
+          },
+        },
+      });
+
+      if (!result) {
+        return res.status(404).json({ error: "Processing result not found" });
+      }
+
+      const isAdmin = req.user?.roleName === "admin";
+      const isOwner = result.uploadedById === req.user?.userId;
+
+      if (!isAdmin && !isOwner) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      // 2. Decrypt content
+      const summary = result.summaryData && result.summaryIv
+        ? decrypt(result.summaryData, result.summaryIv)
+        : "";
+
+      const transcript = result.transcriptData && result.transcriptIv
+        ? decrypt(result.transcriptData, result.transcriptIv)
+        : "";
+
+      let summaryData: any = {};
+      try {
+        summaryData = summary ? JSON.parse(summary) : {};
+      } catch {
+        summaryData = {};
+      }
+
+      // Add tags to summaryData
+      if (result.tags && result.tags.length > 0) {
+        summaryData.tags = result.tags.map((t) => t.tag.name);
+      }
+
+      // 3. Create PDF stream
+      const { PDFFormatter, sanitizeFilename } = await import("../services/exportFormatters");
+      const formatter = new PDFFormatter();
+      const pdfStream = formatter.createPDFStream(result, {
+        summary,
+        summaryData,
+        transcript,
+      });
+
+      // 4. Set headers
+      const filename = sanitizeFilename(result.title || "result") + ".pdf";
+      res.setHeader("Content-Type", formatter.mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+      // 5. Create audit log (async)
+      prisma.auditLog
+        .create({
+          data: {
+            userId: req.user?.userId,
+            action: "files.result_export",
+            resource: "processing_result",
+            resourceId: id,
+            details: { format: "pdf" },
+            ipAddress: req.ip,
+            userAgent: req.headers["user-agent"],
+            success: true,
+          },
+        })
+        .catch((err) => {
+          logger.error("Failed to create audit log for export", { error: err });
+        });
+
+      // 6. Pipe stream to response
+      pdfStream.pipe(res);
+    } catch (error) {
+      logger.error("Error exporting to PDF:", error);
+      return res.status(500).json({ error: "Failed to export result" });
+    }
+  }
+);
+
 export default router;
 
 /**

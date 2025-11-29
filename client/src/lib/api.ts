@@ -453,6 +453,30 @@ export const filesApi = {
       success: boolean;
       tags: Array<{ name: string; count: number }>;
     }>("/api/files/tags", { params }),
+
+  // Update processing result
+  updateResult: (
+    id: string,
+    data: {
+      title?: string;
+      summary?: string;
+      transcript?: string;
+      summaryData?: any;
+      tags?: string[];
+    }
+  ) =>
+    api.put<{ success: boolean; result: ProcessingResultItem }>(
+      `/api/files/results/${id}`,
+      data
+    ),
+
+  // Export processing results
+  exportResultMarkdown: (id: string) =>
+    api.get(`/api/files/results/${id}/markdown`, { responseType: "blob" }),
+  exportResultWord: (id: string) =>
+    api.get(`/api/files/results/${id}/word`, { responseType: "blob" }),
+  exportResultPdf: (id: string) =>
+    api.get(`/api/files/results/${id}/pdf`, { responseType: "blob" }),
 };
 
 // ============================================
