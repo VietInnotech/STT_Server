@@ -313,6 +313,18 @@ export const filesApi = {
     });
   },
   deleteText: (id: string) => api.delete(`/api/files/text/${id}`),
+  // Bulk delete multiple files at once
+  bulkDelete: (data: {
+    audioIds?: string[];
+    textIds?: string[];
+    pairIds?: string[];
+  }) =>
+    api.post<{
+      success: boolean;
+      deleted: { audio: number; text: number; pairs: number };
+      failed: { audio: number; text: number; pairs: number };
+      message: string;
+    }>("/api/files/bulk-delete", data),
   // Share files with users
   share: (
     shares: Array<{

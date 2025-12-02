@@ -23,8 +23,15 @@ import {
   ChevronDown,
   List,
   LayoutGrid,
+  CheckSquare,
+  Square,
 } from "lucide-react";
-import { filesApi, type ProcessingResultItem, type SourceAudioInfo, templatesApi } from "../lib/api";
+import {
+  filesApi,
+  type ProcessingResultItem,
+  type SourceAudioInfo,
+  templatesApi,
+} from "../lib/api";
 import { useSettingsStore } from "../stores/settings";
 import { formatDate } from "../lib/formatters";
 import { Pagination } from "./Pagination";
@@ -146,6 +153,11 @@ export default function ProcessingResultsTab() {
   const setResultsViewMode = useSettingsStore((s) => s.setResultsViewMode);
   const { can } = usePermission();
   const canDelete = can(PERMISSIONS.FILES_DELETE);
+
+  // Internal selection state for this tab
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [results, setResults] = useState<ProcessingResultItem[]>([]);
@@ -308,15 +320,18 @@ export default function ProcessingResultsTab() {
     setActiveTab("summary"); // Reset to summary tab
     try {
       const res = await filesApi.getResult(result.id);
-      
+
       // Fetch source audio blob if available
       let sourceAudioUrl: string | null = null;
       if (res.data.result?.sourceAudioId) {
         try {
-          const audioResp = await filesApi.getAudio(res.data.result.sourceAudioId);
+          const audioResp = await filesApi.getAudio(
+            res.data.result.sourceAudioId
+          );
           let blob = audioResp.data as Blob;
           try {
-            const contentType = (audioResp as any).headers?.["content-type"] || "";
+            const contentType =
+              (audioResp as any).headers?.["content-type"] || "";
             if (contentType && blob.type !== contentType) {
               blob = new Blob([blob], { type: contentType });
             }
@@ -328,7 +343,7 @@ export default function ProcessingResultsTab() {
           logger.error("Failed to load source audio", err);
         }
       }
-      
+
       setResultContent({
         summary: res.data.result?.summary || null,
         summaryData: res.data.result?.summaryData || null,
@@ -357,6 +372,71 @@ export default function ProcessingResultsTab() {
     } catch (err) {
       toast.error(t("results.failedToDeleteResult"));
       console.error("Failed to delete result", err);
+    }
+  };
+
+  // Selection helpers
+  const toggleResultSelection = (id: string) => {
+    setSelectedResults((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllResults = () => {
+    if (selectedResults.size === results.length && results.length > 0) {
+      setSelectedResults(new Set());
+    } else {
+      setSelectedResults(new Set(results.map((r) => r.id)));
+    }
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedResults(new Set());
+  };
+
+  // Bulk delete for results
+  const handleBulkDeleteResults = async () => {
+    if (selectedResults.size === 0) return;
+
+    const selectedList = results.filter((r) => selectedResults.has(r.id));
+    if (!confirm(t("confirmBulkDelete", { count: selectedList.length }))) return;
+
+    setBulkDeleting(true);
+    try {
+      let deleted = 0;
+      let failed = 0;
+      
+      for (const result of selectedList) {
+        try {
+          await filesApi.deleteResult(result.id);
+          deleted++;
+        } catch {
+          failed++;
+        }
+      }
+
+      if (failed === 0) {
+        toast.success(t("bulkDeleteSuccess", { count: deleted }));
+      } else if (deleted > 0) {
+        toast.success(t("bulkDeletePartial", { deleted, failed }));
+      } else {
+        toast.error(t("bulkDeleteFailed"));
+      }
+
+      exitSelectionMode();
+      fetchResults();
+    } catch (error) {
+      toast.error(t("bulkDeleteFailed"));
+      console.error("Bulk delete error:", error);
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -392,7 +472,7 @@ export default function ProcessingResultsTab() {
 
       // If the detail modal is still open, refresh its content
       if (viewingResult?.id === editingResult.id) {
-        await handleViewClick(viewingResult);
+        await handleViewResult(viewingResult);
       }
     } catch (err) {
       toast.error(
@@ -535,8 +615,66 @@ export default function ProcessingResultsTab() {
             )}
             {t("refresh")}
           </button>
+          {canDelete && !selectionMode && (
+            <button
+              onClick={() => setSelectionMode(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              title={t("selectMode")}
+            >
+              <CheckSquare className="h-4 w-4" />
+              {t("selectMode")}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Selection mode action bar */}
+      {selectionMode && (
+        <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={toggleSelectAllResults}
+              className="flex items-center gap-2 text-sm text-blue-700 hover:text-blue-900"
+            >
+              {selectedResults.size === results.length && results.length > 0 ? (
+                <>
+                  <CheckSquare className="h-4 w-4" />
+                  {t("deselectAll")}
+                </>
+              ) : (
+                <>
+                  <Square className="h-4 w-4" />
+                  {t("selectAll")}
+                </>
+              )}
+            </button>
+            <span className="text-sm text-blue-700 font-medium">
+              {t("selectedCount", { count: selectedResults.size })}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleBulkDeleteResults}
+              disabled={selectedResults.size === 0 || bulkDeleting}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {bulkDeleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              {t("deleteSelected")}
+            </button>
+            <button
+              onClick={exitSelectionMode}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+            >
+              <X className="h-4 w-4" />
+              {t("cancelSelection")}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Search bar with view toggle */}
       <div className="flex gap-2">
@@ -685,102 +823,166 @@ export default function ProcessingResultsTab() {
         ) : resultsViewMode === "list" ? (
           /* ===== LIST VIEW ===== */
           <div className="divide-y divide-gray-100">
-            {results.map((result) => (
-              <div
-                key={result.id}
-                className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer group"
-                onDoubleClick={() => handleViewResult(result)}
-              >
-                {/* Icon and Title - main content */}
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center">
-                    <FileText className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-gray-900 truncate">
-                      {result.title || "-"}
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
-                      <span className="truncate max-w-[200px]">
-                        {result.templateName || result.templateId || "-"}
-                      </span>
-                      {result.tags.length > 0 && (
-                        <span className="hidden sm:inline-flex items-center gap-1">
-                          <Tag className="h-3 w-3" />
-                          {result.tags.length}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Status Badge */}
-                <span
-                  className={`hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(
-                    result.status
-                  )}`}
+            {results.map((result) => {
+              const isSelected = selectedResults.has(result.id);
+              return (
+                <div
+                  key={result.id}
+                  className={`flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors group ${
+                    selectionMode ? "cursor-default" : "cursor-pointer"
+                  } ${isSelected ? "bg-blue-50" : ""}`}
+                  onDoubleClick={() => !selectionMode && handleViewResult(result)}
+                  onClick={() =>
+                    selectionMode ? toggleResultSelection(result.id) : handleViewResult(result)
+                  }
                 >
-                  {getStatusIcon(result.status)}
-                  <span className="hidden md:inline">
-                    {t(`results.${result.status}`)}
-                  </span>
-                </span>
-
-                {/* Confidence */}
-                <div className="hidden md:flex items-center gap-1 text-xs text-gray-500 w-16">
-                  <BarChart3 className="h-3.5 w-3.5" />
-                  {formatConfidence(result.confidence)}
-                </div>
-
-                {/* Duration */}
-                <div className="hidden lg:flex items-center gap-1 text-xs text-gray-500 w-16">
-                  <Clock className="h-3.5 w-3.5" />
-                  {formatDuration(result.audioDuration)}
-                </div>
-
-                {/* Date */}
-                <div className="hidden lg:block text-xs text-gray-500 w-24">
-                  {result.processedAt ? formatDate(result.processedAt) : "-"}
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleViewResult(result);
-                    }}
-                    className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                    title={t("results.viewResult")}
-                  >
-                    <Eye className="h-4 w-4" />
-                  </button>
-                  {canDelete && (
+                  {/* Selection Checkbox - Always visible in selection mode */}
+                  {selectionMode && (
                     <button
+                      type="button"
+                      className="flex-shrink-0 -ml-2 p-1.5 hover:bg-gray-200 rounded transition-colors"
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDeleteResult(result);
+                        toggleResultSelection(result.id);
                       }}
-                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                      title={t("results.deleteResult")}
+                      aria-label="select"
+                      style={{ cursor: "pointer" }}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      {isSelected ? (
+                        <CheckSquare className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                      ) : (
+                        <Square className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                      )}
                     </button>
                   )}
+
+                  {/* Icon and Title - main content */}
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center">
+                      <FileText className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-gray-900 truncate">
+                        {result.title || "-"}
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
+                        <span className="truncate max-w-[200px]">
+                          {result.templateName || result.templateId || "-"}
+                        </span>
+                        {result.tags.length > 0 && (
+                          <span className="hidden sm:inline-flex items-center gap-1">
+                            <Tag className="h-3 w-3" />
+                            {result.tags.length}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Status Badge */}
+                  {!selectionMode && (
+                    <>
+                      <span
+                        className={`hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(
+                          result.status
+                        )}`}
+                      >
+                        {getStatusIcon(result.status)}
+                        <span className="hidden md:inline">
+                          {t(`results.${result.status}`)}
+                        </span>
+                      </span>
+
+                      {/* Confidence */}
+                      <div className="hidden md:flex items-center gap-1 text-xs text-gray-500 w-16">
+                        <BarChart3 className="h-3.5 w-3.5" />
+                        {formatConfidence(result.confidence)}
+                      </div>
+
+                      {/* Duration */}
+                      <div className="hidden lg:flex items-center gap-1 text-xs text-gray-500 w-16">
+                        <Clock className="h-3.5 w-3.5" />
+                        {formatDuration(result.audioDuration)}
+                      </div>
+
+                      {/* Date */}
+                      <div className="hidden lg:block text-xs text-gray-500 w-24">
+                        {result.processedAt ? formatDate(result.processedAt) : "-"}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Actions */}
+                  {!selectionMode && (
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleViewResult(result);
+                        }}
+                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                        title={t("results.viewResult")}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      {canDelete && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteResult(result);
+                          }}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                          title={t("results.deleteResult")}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           /* ===== CARD VIEW ===== */
           <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {results.map((result) => (
-              <div
-                key={result.id}
-                className="bg-white border border-gray-200 rounded-xl hover:shadow-md hover:border-gray-300 transition-all cursor-pointer group"
-                onDoubleClick={() => handleViewResult(result)}
-              >
-                {/* Card Header */}
+            {results.map((result) => {
+              const isSelected = selectedResults.has(result.id);
+              return (
+                <div
+                  key={result.id}
+                  className={`bg-white border rounded-xl hover:shadow-md transition-all group relative ${
+                    selectionMode ? "cursor-default" : "cursor-pointer"
+                  } ${
+                    isSelected
+                      ? "border-blue-400 bg-blue-50 ring-2 ring-blue-300"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                  onDoubleClick={() => !selectionMode && handleViewResult(result)}
+                  onClick={() =>
+                    selectionMode ? toggleResultSelection(result.id) : handleViewResult(result)
+                  }
+                >
+                  {/* Selection Checkbox Overlay - Top right corner */}
+                  {selectionMode && (
+                    <button
+                      type="button"
+                      className="absolute top-2 right-2 z-10 p-1 bg-white rounded hover:bg-gray-100 transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleResultSelection(result.id);
+                      }}
+                      aria-label="select"
+                    >
+                      {isSelected ? (
+                        <CheckSquare className="h-6 w-6 text-blue-600" />
+                      ) : (
+                        <Square className="h-6 w-6 text-gray-400" />
+                      )}
+                    </button>
+                  )}
+
+                  {/* Card Header */}
                 <div className="p-4 border-b border-gray-100">
                   <div className="flex items-start gap-3">
                     <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
@@ -854,32 +1056,35 @@ export default function ProcessingResultsTab() {
                 </div>
 
                 {/* Card Footer - Actions */}
-                <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleViewResult(result);
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                    {t("results.viewResult")}
-                  </button>
-                  {canDelete && (
+                {!selectionMode && (
+                  <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDeleteResult(result);
+                        handleViewResult(result);
                       }}
-                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                      title={t("results.deleteResult")}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Eye className="h-3.5 w-3.5" />
+                      {t("results.viewResult")}
                     </button>
-                  )}
+                    {canDelete && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteResult(result);
+                        }}
+                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                        title={t("results.deleteResult")}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -1142,11 +1347,7 @@ export default function ProcessingResultsTab() {
                     <h4 className="text-sm font-semibold text-gray-900 mb-3">
                       {t("results.sourceAudio")}
                     </h4>
-                    <audio
-                      controls
-                      className="w-full mb-2"
-                      preload="metadata"
-                    >
+                    <audio controls className="w-full mb-2" preload="metadata">
                       <source
                         src={resultContent.sourceAudioUrl || undefined}
                         type={resultContent.sourceAudio.mimeType || "audio/wav"}
@@ -1154,8 +1355,18 @@ export default function ProcessingResultsTab() {
                       {t("audioNotSupported")}
                     </audio>
                     <div className="text-xs text-gray-500 space-y-1">
-                      <p>{t("filename")}: {resultContent.sourceAudio.filename}</p>
-                      <p>{t("size")}: {(resultContent.sourceAudio.fileSize / 1024 / 1024).toFixed(2)} MB</p>
+                      <p>
+                        {t("filename")}: {resultContent.sourceAudio.filename}
+                      </p>
+                      <p>
+                        {t("size")}:{" "}
+                        {(
+                          resultContent.sourceAudio.fileSize /
+                          1024 /
+                          1024
+                        ).toFixed(2)}{" "}
+                        MB
+                      </p>
                     </div>
                   </div>
                 )}

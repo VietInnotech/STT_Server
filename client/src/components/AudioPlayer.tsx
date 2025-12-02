@@ -1,5 +1,13 @@
 import { useState, useRef, useEffect } from "react";
-import { Play, Pause, Volume2, VolumeX, Download, Loader2, AlertCircle } from "lucide-react";
+import {
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Download,
+  Loader2,
+  AlertCircle,
+} from "lucide-react";
 import { filesApi, type SourceAudioInfo } from "../lib/api";
 import toast from "react-hot-toast";
 
@@ -10,7 +18,12 @@ interface AudioPlayerProps {
   className?: string;
 }
 
-export function AudioPlayer({ audioId, audioInfo, onDownload, className }: AudioPlayerProps) {
+export function AudioPlayer({
+  audioId,
+  audioInfo,
+  onDownload,
+  className,
+}: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -117,7 +130,9 @@ export function AudioPlayer({ audioId, audioInfo, onDownload, className }: Audio
 
   if (error) {
     return (
-      <div className={`flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-lg ${className}`}>
+      <div
+        className={`flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-lg ${className}`}
+      >
         <AlertCircle className="h-4 w-4 flex-shrink-0" />
         <span className="text-sm">{error}</span>
       </div>
@@ -169,7 +184,9 @@ export function AudioPlayer({ audioId, audioInfo, onDownload, className }: Audio
             className="w-full h-2 bg-gray-300 rounded-full appearance-none cursor-pointer disabled:cursor-not-allowed accent-blue-600"
             style={{
               background: duration
-                ? `linear-gradient(to right, #3b82f6 ${(currentTime / duration) * 100}%, #d1d5db ${(currentTime / duration) * 100}%)`
+                ? `linear-gradient(to right, #3b82f6 ${
+                    (currentTime / duration) * 100
+                  }%, #d1d5db ${(currentTime / duration) * 100}%)`
                 : "#d1d5db",
             }}
           />
@@ -185,7 +202,11 @@ export function AudioPlayer({ audioId, audioInfo, onDownload, className }: Audio
           className="p-2 text-gray-500 hover:text-gray-700 transition-colors flex-shrink-0"
           title={isMuted ? "Unmute" : "Mute"}
         >
-          {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+          {isMuted ? (
+            <VolumeX className="h-5 w-5" />
+          ) : (
+            <Volume2 className="h-5 w-5" />
+          )}
         </button>
 
         {/* Download Button */}
@@ -204,7 +225,9 @@ export function AudioPlayer({ audioId, audioInfo, onDownload, className }: Audio
           <span className="truncate max-w-xs" title={audioInfo.filename}>
             {audioInfo.filename}
           </span>
-          <span className="flex-shrink-0">{(audioInfo.fileSize / 1024 / 1024).toFixed(2)} MB</span>
+          <span className="flex-shrink-0">
+            {(audioInfo.fileSize / 1024 / 1024).toFixed(2)} MB
+          </span>
         </div>
       )}
     </div>

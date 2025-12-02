@@ -1163,9 +1163,7 @@ router.get(
             stack: streamErr.stack,
           });
           if (!res.headersSent) {
-            res
-              .status(500)
-              .json({ error: "Failed to stream audio file" });
+            res.status(500).json({ error: "Failed to stream audio file" });
           } else {
             res.end();
           }
@@ -1388,6 +1386,278 @@ router.delete(
     } catch (error) {
       logger.error("Error deleting text file:", error);
       return res.status(500).json({ error: "Failed to delete text file" });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/files/bulk-delete:
+ *   post:
+ *     summary: Delete multiple files at once
+ *     description: Delete multiple audio files, text files, and/or text pairs in a single request
+ *     tags: [Files]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               audioIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of audio file IDs to delete
+ *               textIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of text file IDs to delete
+ *               pairIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of text pair IDs to delete
+ *     responses:
+ *       200:
+ *         description: Bulk delete results
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 deleted:
+ *                   type: object
+ *                   properties:
+ *                     audio:
+ *                       type: integer
+ *                     text:
+ *                       type: integer
+ *                     pairs:
+ *                       type: integer
+ *                 failed:
+ *                   type: object
+ *                   properties:
+ *                     audio:
+ *                       type: integer
+ *                     text:
+ *                       type: integer
+ *                     pairs:
+ *                       type: integer
+ *       400:
+ *         description: No file IDs provided
+ *       403:
+ *         description: Forbidden
+ */
+router.post(
+  "/bulk-delete",
+  requirePermission(PERMISSIONS.FILES_DELETE),
+  async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+      const { audioIds, textIds, pairIds } = req.body as {
+        audioIds?: string[];
+        textIds?: string[];
+        pairIds?: string[];
+      };
+
+      const audioList = Array.isArray(audioIds) ? audioIds : [];
+      const textList = Array.isArray(textIds) ? textIds : [];
+      const pairList = Array.isArray(pairIds) ? pairIds : [];
+
+      if (
+        audioList.length === 0 &&
+        textList.length === 0 &&
+        pairList.length === 0
+      ) {
+        return res.status(400).json({ error: "No file IDs provided" });
+      }
+
+      const isAdmin = req.user?.roleName === "admin";
+      const userId = req.user?.userId;
+
+      const deleted = { audio: 0, text: 0, pairs: 0 };
+      const failed = { audio: 0, text: 0, pairs: 0 };
+
+      // Delete audio files
+      for (const id of audioList) {
+        try {
+          const file = await prisma.audioFile.findUnique({ where: { id } });
+          if (!file) {
+            failed.audio++;
+            continue;
+          }
+          if (!isAdmin && file.uploadedById !== userId) {
+            failed.audio++;
+            continue;
+          }
+          await deleteAudioFile(file.id);
+          deleted.audio++;
+
+          // Audit log
+          try {
+            await prisma.auditLog.create({
+              data: {
+                userId,
+                action: "files.bulk_delete",
+                resource: "audio",
+                resourceId: id,
+                details: {
+                  filename: file.filename,
+                  fileSize: file.fileSize,
+                  hadFilePath: !!file.filePath,
+                },
+                ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+                userAgent: req.headers["user-agent"] || "unknown",
+                success: true,
+              },
+            });
+          } catch {}
+        } catch (err) {
+          logger.error("Bulk delete audio failed", { err, id });
+          failed.audio++;
+        }
+      }
+
+      // Delete text files
+      for (const id of textList) {
+        try {
+          const file = await prisma.textFile.findUnique({ where: { id } });
+          if (!file) {
+            failed.text++;
+            continue;
+          }
+          if (!isAdmin && file.uploadedById !== userId) {
+            failed.text++;
+            continue;
+          }
+
+          await prisma.$transaction(async (tx) => {
+            await tx.fileShare.deleteMany({
+              where: { fileId: id, fileType: "text" },
+            });
+            await tx.textFile.delete({ where: { id } });
+          });
+
+          if (file.uploadedById) {
+            try {
+              const { updateUserStorageUsage } = await import(
+                "../services/storageService"
+              );
+              await updateUserStorageUsage(file.uploadedById);
+            } catch {}
+          }
+
+          deleted.text++;
+
+          // Audit log
+          try {
+            await prisma.auditLog.create({
+              data: {
+                userId,
+                action: "files.bulk_delete",
+                resource: "text",
+                resourceId: id,
+                details: { filename: file.filename, fileSize: file.fileSize },
+                ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+                userAgent: req.headers["user-agent"] || "unknown",
+                success: true,
+              },
+            });
+          } catch {}
+        } catch (err) {
+          logger.error("Bulk delete text failed", { err, id });
+          failed.text++;
+        }
+      }
+
+      // Delete pairs
+      for (const id of pairList) {
+        try {
+          const pair = await prisma.textFilePair.findUnique({
+            where: { id },
+            include: { summaryFile: true, realtimeFile: true },
+          });
+          if (!pair) {
+            failed.pairs++;
+            continue;
+          }
+          if (!isAdmin && pair.uploadedById !== userId) {
+            failed.pairs++;
+            continue;
+          }
+
+          // Get file IDs before deleting
+          const summaryId = pair.summaryFileId;
+          const realtimeId = pair.realtimeFileId;
+          const ownerId = pair.uploadedById;
+
+          await prisma.$transaction(async (tx) => {
+            // Delete pair record first
+            await tx.textFilePair.delete({ where: { id } });
+
+            // Delete associated text files if they exist
+            if (summaryId) {
+              await tx.fileShare.deleteMany({
+                where: { fileId: summaryId, fileType: "text" },
+              });
+              await tx.textFile.delete({ where: { id: summaryId } }).catch(() => {});
+            }
+            if (realtimeId) {
+              await tx.fileShare.deleteMany({
+                where: { fileId: realtimeId, fileType: "text" },
+              });
+              await tx.textFile.delete({ where: { id: realtimeId } }).catch(() => {});
+            }
+          });
+
+          if (ownerId) {
+            try {
+              const { updateUserStorageUsage } = await import(
+                "../services/storageService"
+              );
+              await updateUserStorageUsage(ownerId);
+            } catch {}
+          }
+
+          deleted.pairs++;
+
+          // Audit log
+          try {
+            await prisma.auditLog.create({
+              data: {
+                userId,
+                action: "files.bulk_delete",
+                resource: "text_pair",
+                resourceId: id,
+                details: { pairName: pair.name },
+                ipAddress: req.ip || req.socket.remoteAddress || "unknown",
+                userAgent: req.headers["user-agent"] || "unknown",
+                success: true,
+              },
+            });
+          } catch {}
+        } catch (err) {
+          logger.error("Bulk delete pair failed", { err, id });
+          failed.pairs++;
+        }
+      }
+
+      logger.info("Bulk delete completed", { deleted, failed, userId });
+
+      return res.json({
+        success: true,
+        deleted,
+        failed,
+        message: `Deleted ${deleted.audio + deleted.text + deleted.pairs} files`,
+      });
+    } catch (error) {
+      logger.error("Error in bulk delete:", error);
+      return res.status(500).json({ error: "Failed to delete files" });
     }
   }
 );
@@ -3595,13 +3865,15 @@ router.get(
       }
 
       // 2. Decrypt content
-      const summary = result.summaryData && result.summaryIv
-        ? decrypt(result.summaryData, result.summaryIv)
-        : "";
+      const summary =
+        result.summaryData && result.summaryIv
+          ? decrypt(result.summaryData, result.summaryIv)
+          : "";
 
-      const transcript = result.transcriptData && result.transcriptIv
-        ? decrypt(result.transcriptData, result.transcriptIv)
-        : "";
+      const transcript =
+        result.transcriptData && result.transcriptIv
+          ? decrypt(result.transcriptData, result.transcriptIv)
+          : "";
 
       let summaryData: any = {};
       try {
@@ -3616,7 +3888,9 @@ router.get(
       }
 
       // 3. Format as Markdown
-      const { MarkdownFormatter, sanitizeFilename } = await import("../services/exportFormatters");
+      const { MarkdownFormatter, sanitizeFilename } = await import(
+        "../services/exportFormatters"
+      );
       const formatter = new MarkdownFormatter();
       const markdown = formatter.format(result, {
         summary,
@@ -3627,7 +3901,10 @@ router.get(
       // 4. Send with headers
       const filename = sanitizeFilename(result.title || "result") + ".md";
       res.setHeader("Content-Type", formatter.mimeType);
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+      );
 
       // 5. Create audit log (async)
       prisma.auditLog
@@ -3713,13 +3990,15 @@ router.get(
       }
 
       // 2. Decrypt content
-      const summary = result.summaryData && result.summaryIv
-        ? decrypt(result.summaryData, result.summaryIv)
-        : "";
+      const summary =
+        result.summaryData && result.summaryIv
+          ? decrypt(result.summaryData, result.summaryIv)
+          : "";
 
-      const transcript = result.transcriptData && result.transcriptIv
-        ? decrypt(result.transcriptData, result.transcriptIv)
-        : "";
+      const transcript =
+        result.transcriptData && result.transcriptIv
+          ? decrypt(result.transcriptData, result.transcriptIv)
+          : "";
 
       let summaryData: any = {};
       try {
@@ -3734,7 +4013,9 @@ router.get(
       }
 
       // 3. Format as Word document
-      const { WordFormatter, sanitizeFilename } = await import("../services/exportFormatters");
+      const { WordFormatter, sanitizeFilename } = await import(
+        "../services/exportFormatters"
+      );
       const formatter = new WordFormatter();
       const buffer = await formatter.format(result, {
         summary,
@@ -3745,7 +4026,10 @@ router.get(
       // 4. Send with headers
       const filename = sanitizeFilename(result.title || "result") + ".docx";
       res.setHeader("Content-Type", formatter.mimeType);
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+      );
       res.setHeader("Content-Length", buffer.length);
 
       // 5. Create audit log (async)
@@ -3832,13 +4116,15 @@ router.get(
       }
 
       // 2. Decrypt content
-      const summary = result.summaryData && result.summaryIv
-        ? decrypt(result.summaryData, result.summaryIv)
-        : "";
+      const summary =
+        result.summaryData && result.summaryIv
+          ? decrypt(result.summaryData, result.summaryIv)
+          : "";
 
-      const transcript = result.transcriptData && result.transcriptIv
-        ? decrypt(result.transcriptData, result.transcriptIv)
-        : "";
+      const transcript =
+        result.transcriptData && result.transcriptIv
+          ? decrypt(result.transcriptData, result.transcriptIv)
+          : "";
 
       let summaryData: any = {};
       try {
@@ -3853,7 +4139,9 @@ router.get(
       }
 
       // 3. Create PDF stream
-      const { PDFFormatter, sanitizeFilename } = await import("../services/exportFormatters");
+      const { PDFFormatter, sanitizeFilename } = await import(
+        "../services/exportFormatters"
+      );
       const formatter = new PDFFormatter();
       const pdfStream = formatter.createPDFStream(result, {
         summary,
@@ -3864,7 +4152,10 @@ router.get(
       // 4. Set headers
       const filename = sanitizeFilename(result.title || "result") + ".pdf";
       res.setHeader("Content-Type", formatter.mimeType);
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+      );
 
       // 5. Create audit log (async)
       prisma.auditLog

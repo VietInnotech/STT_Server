@@ -12,6 +12,9 @@ import {
   Share2,
   List,
   LayoutGrid,
+  CheckSquare,
+  Square,
+  X,
 } from "lucide-react";
 import { filesApi, type FileItem } from "../lib/api";
 import { useSettingsStore } from "../stores/settings";
@@ -57,6 +60,11 @@ export default function FilesPage() {
     number | "" | null
   >(null);
   const [showShareModal, setShowShareModal] = useState(false);
+
+  // Selection mode state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const [ownerSharesModalFile, setOwnerSharesModalFile] =
     useState<CombinedFile | null>(null);
@@ -589,6 +597,81 @@ export default function FilesPage() {
     return { text: t("none"), muted: true };
   };
 
+  // Selection mode helpers
+  const toggleFileSelection = (fileId: string) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileId)) {
+        next.delete(fileId);
+      } else {
+        next.add(fileId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedFiles.size === filteredFiles.length) {
+      // Deselect all
+      setSelectedFiles(new Set());
+    } else {
+      // Select all filtered files
+      setSelectedFiles(new Set(filteredFiles.map((f) => f.id)));
+    }
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedFiles(new Set());
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedFiles.size === 0) return;
+
+    const selectedList = filteredFiles.filter((f) => selectedFiles.has(f.id));
+    if (!confirm(t("confirmBulkDelete", { count: selectedList.length }))) return;
+
+    setBulkDeleting(true);
+    try {
+      const audioIds: string[] = [];
+      const textIds: string[] = [];
+      const pairIds: string[] = [];
+
+      for (const file of selectedList) {
+        if ((file as any).isPair) {
+          pairIds.push((file as any).pairId);
+        } else if (file.type === "audio") {
+          audioIds.push(file.id);
+        } else {
+          textIds.push(file.id);
+        }
+      }
+
+      const response = await filesApi.bulkDelete({ audioIds, textIds, pairIds });
+      const { deleted, failed } = response.data;
+      const totalDeleted = deleted.audio + deleted.text + deleted.pairs;
+      const totalFailed = failed.audio + failed.text + failed.pairs;
+
+      if (totalFailed === 0) {
+        toast.success(t("bulkDeleteSuccess", { count: totalDeleted }));
+      } else if (totalDeleted > 0) {
+        toast.success(
+          t("bulkDeletePartial", { deleted: totalDeleted, failed: totalFailed })
+        );
+      } else {
+        toast.error(t("bulkDeleteFailed"));
+      }
+
+      exitSelectionMode();
+      fetchFiles();
+    } catch (error) {
+      toast.error(t("bulkDeleteFailed"));
+      console.error("Bulk delete error:", error);
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   // Apply pagination to filtered files
   const totalItems = filteredFiles.length;
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -706,8 +789,67 @@ export default function FilesPage() {
             )}
             {t("refresh")}
           </button>
+          {/* Selection mode toggle - only show on Files tab */}
+          {canDelete && !selectionMode && activeTab === "files" && (
+            <button
+              onClick={() => setSelectionMode(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              title={t("selectMode")}
+            >
+              <CheckSquare className="h-4 w-4" />
+              {t("selectMode")}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Selection mode action bar - only show on Files tab */}
+      {selectionMode && activeTab === "files" && (
+        <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={toggleSelectAll}
+              className="flex items-center gap-2 text-sm text-blue-700 hover:text-blue-900"
+            >
+              {selectedFiles.size === filteredFiles.length && filteredFiles.length > 0 ? (
+                <>
+                  <CheckSquare className="h-4 w-4" />
+                  {t("deselectAll")}
+                </>
+              ) : (
+                <>
+                  <Square className="h-4 w-4" />
+                  {t("selectAll")}
+                </>
+              )}
+            </button>
+            <span className="text-sm text-blue-700 font-medium">
+              {t("selectedCount", { count: selectedFiles.size })}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleBulkDelete}
+              disabled={selectedFiles.size === 0 || bulkDeleting}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {bulkDeleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              {t("deleteSelected")}
+            </button>
+            <button
+              onClick={exitSelectionMode}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+            >
+              <X className="h-4 w-4" />
+              {t("cancelSelection")}
+            </button>
+          </div>
+        </div>
+      )}
 
       <ShareFilesModal
         open={showShareModal}
@@ -1080,12 +1222,39 @@ export default function FilesPage() {
                   <div className="divide-y divide-gray-100">
                     {paginatedFiles.map((file: CombinedFile) => {
                       const deleteLabel = getDeleteAfterLabel(file);
+                      const isSelected = selectedFiles.has(file.id);
                       return (
                         <div
                           key={file.id}
-                          className="group flex items-center gap-4 px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer"
-                          onClick={() => handleOpenFile(file)}
+                          className={`group flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors ${
+                            selectionMode ? "cursor-default" : "cursor-pointer"
+                          } ${isSelected ? "bg-blue-50" : ""}`}
+                          onClick={() =>
+                            selectionMode
+                              ? toggleFileSelection(file.id)
+                              : handleOpenFile(file)
+                          }
                         >
+                          {/* Selection Checkbox - Always visible in selection mode */}
+                          {selectionMode && (
+                            <button
+                              type="button"
+                              className="flex-shrink-0 -ml-2 p-1.5 hover:bg-gray-200 rounded transition-colors"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleFileSelection(file.id);
+                              }}
+                              aria-label="select"
+                              style={{ cursor: "pointer" }}
+                            >
+                              {isSelected ? (
+                                <CheckSquare className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                              ) : (
+                                <Square className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                              )}
+                            </button>
+                          )}
+
                           {/* File Icon */}
                           <div className="flex-shrink-0">
                             {file.type === "audio" ? (
@@ -1153,41 +1322,43 @@ export default function FilesPage() {
                           </div>
 
                           {/* Actions */}
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownload(file);
-                              }}
-                              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                              title={t("common:download")}
-                            >
-                              <Download className="h-4 w-4" />
-                            </button>
-                            {canDelete && (
+                          {!selectionMode && (
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleDelete(file);
+                                  handleDownload(file);
                                 }}
-                                className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                title={t("common:delete")}
+                                className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title={t("common:download")}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <Download className="h-4 w-4" />
                               </button>
-                            )}
-                            {canCompareFile(file) && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleCompareClick(file);
-                                }}
-                                className="px-2 py-1.5 text-xs font-medium bg-yellow-50 text-yellow-700 rounded-lg hover:bg-yellow-100 transition-colors"
-                              >
-                                {t("compare")}
-                              </button>
-                            )}
-                          </div>
+                              {canDelete && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDelete(file);
+                                  }}
+                                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                  title={t("common:delete")}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              )}
+                              {canCompareFile(file) && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCompareClick(file);
+                                  }}
+                                  className="px-2 py-1.5 text-xs font-medium bg-yellow-50 text-yellow-700 rounded-lg hover:bg-yellow-100 transition-colors"
+                                >
+                                  {t("compare")}
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1199,12 +1370,42 @@ export default function FilesPage() {
                   <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                     {paginatedFiles.map((file: CombinedFile) => {
                       const deleteLabel = getDeleteAfterLabel(file);
+                      const isSelected = selectedFiles.has(file.id);
                       return (
                         <div
                           key={file.id}
-                          className="group bg-white border border-gray-200 rounded-lg hover:shadow-md hover:border-gray-300 transition-all cursor-pointer"
-                          onClick={() => handleOpenFile(file)}
+                          className={`group bg-white border rounded-lg hover:shadow-md transition-all relative ${
+                            selectionMode ? "cursor-default" : "cursor-pointer"
+                          } ${
+                            isSelected
+                              ? "border-blue-400 bg-blue-50 ring-2 ring-blue-300"
+                              : "border-gray-200 hover:border-gray-300"
+                          }`}
+                          onClick={() =>
+                            selectionMode
+                              ? toggleFileSelection(file.id)
+                              : handleOpenFile(file)
+                          }
                         >
+                          {/* Selection Checkbox Overlay - Top right corner */}
+                          {selectionMode && (
+                            <button
+                              type="button"
+                              className="absolute top-2 right-2 z-10 p-1 bg-white rounded hover:bg-gray-100 transition-colors"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleFileSelection(file.id);
+                              }}
+                              aria-label="select"
+                            >
+                              {isSelected ? (
+                                <CheckSquare className="h-6 w-6 text-blue-600" />
+                              ) : (
+                                <Square className="h-6 w-6 text-gray-400" />
+                              )}
+                            </button>
+                          )}
+
                           {/* Card Header with Icon */}
                           <div className="px-4 pt-4 pb-3 flex items-start gap-3">
                             <div className="flex-shrink-0">
@@ -1295,41 +1496,43 @@ export default function FilesPage() {
                           )}
 
                           {/* Card Actions */}
-                          <div className="px-4 pb-3 pt-1 border-t border-gray-100 flex items-center justify-end gap-1">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownload(file);
-                              }}
-                              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                              title={t("common:download")}
-                            >
-                              <Download className="h-4 w-4" />
-                            </button>
-                            {canDelete && (
+                          {!selectionMode && (
+                            <div className="px-4 pb-3 pt-1 border-t border-gray-100 flex items-center justify-end gap-1">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleDelete(file);
+                                  handleDownload(file);
                                 }}
-                                className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                title={t("common:delete")}
+                                className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title={t("common:download")}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <Download className="h-4 w-4" />
                               </button>
-                            )}
-                            {canCompareFile(file) && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleCompareClick(file);
-                                }}
-                                className="px-2 py-1 text-xs font-medium bg-yellow-50 text-yellow-700 rounded-lg hover:bg-yellow-100 transition-colors"
-                              >
-                                {t("compare")}
-                              </button>
-                            )}
-                          </div>
+                              {canDelete && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDelete(file);
+                                  }}
+                                  className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                  title={t("common:delete")}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              )}
+                              {canCompareFile(file) && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCompareClick(file);
+                                  }}
+                                  className="px-2 py-1 text-xs font-medium bg-yellow-50 text-yellow-700 rounded-lg hover:bg-yellow-100 transition-colors"
+                                >
+                                  {t("compare")}
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1350,7 +1553,9 @@ export default function FilesPage() {
       )}
 
       {/* AI Processing Results Tab Content */}
-      {activeTab === "results" && <ProcessingResultsTab />}
+      {activeTab === "results" && (
+        <ProcessingResultsTab />
+      )}
     </div>
   );
 }

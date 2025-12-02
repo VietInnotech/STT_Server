@@ -207,7 +207,9 @@ export async function decryptFileToStream(
         // Validate header was fully read
         if (offset < STREAM_HEADER_LENGTH + AUTH_TAG_LENGTH) {
           throw new Error(
-            `Incomplete file header: read ${offset} bytes, expected ${STREAM_HEADER_LENGTH + AUTH_TAG_LENGTH}`
+            `Incomplete file header: read ${offset} bytes, expected ${
+              STREAM_HEADER_LENGTH + AUTH_TAG_LENGTH
+            }`
           );
         }
 
@@ -239,11 +241,7 @@ export async function decryptFileToStream(
 
         // Handle read stream errors
         encryptedStream.on("error", (err: Error) => {
-          reject(
-            new Error(
-              `Failed to read encrypted file: ${err.message}`
-            )
-          );
+          reject(new Error(`Failed to read encrypted file: ${err.message}`));
         });
 
         // Handle decipher errors (includes auth tag failures)
@@ -262,18 +260,16 @@ export async function decryptFileToStream(
       } catch (err) {
         reject(
           new Error(
-            `Header parsing failed: ${err instanceof Error ? err.message : String(err)}`
+            `Header parsing failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`
           )
         );
       }
     });
 
     headerStream.on("error", (err: Error) => {
-      reject(
-        new Error(
-          `Failed to read file header: ${err.message}`
-        )
-      );
+      reject(new Error(`Failed to read file header: ${err.message}`));
     });
   });
 }

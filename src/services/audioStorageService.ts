@@ -313,7 +313,9 @@ export async function getAudioStream(audioFileId: string): Promise<{
       };
     } catch (err) {
       throw new Error(
-        `Filesystem audio stream failed: ${err instanceof Error ? err.message : String(err)}`
+        `Filesystem audio stream failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`
       );
     }
   } else if (audioFile.encryptedData) {
@@ -337,7 +339,9 @@ export async function getAudioStream(audioFileId: string): Promise<{
       };
     } catch (err) {
       throw new Error(
-        `Database audio decryption failed: ${err instanceof Error ? err.message : String(err)}`
+        `Database audio decryption failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`
       );
     }
   } else {
