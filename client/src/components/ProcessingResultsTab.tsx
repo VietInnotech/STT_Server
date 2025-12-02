@@ -156,7 +156,9 @@ export default function ProcessingResultsTab() {
 
   // Internal selection state for this tab
   const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
+  const [selectedResults, setSelectedResults] = useState<Set<string>>(
+    new Set()
+  );
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -406,13 +408,14 @@ export default function ProcessingResultsTab() {
     if (selectedResults.size === 0) return;
 
     const selectedList = results.filter((r) => selectedResults.has(r.id));
-    if (!confirm(t("confirmBulkDelete", { count: selectedList.length }))) return;
+    if (!confirm(t("confirmBulkDelete", { count: selectedList.length })))
+      return;
 
     setBulkDeleting(true);
     try {
       let deleted = 0;
       let failed = 0;
-      
+
       for (const result of selectedList) {
         try {
           await filesApi.deleteResult(result.id);
@@ -831,9 +834,13 @@ export default function ProcessingResultsTab() {
                   className={`flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors group ${
                     selectionMode ? "cursor-default" : "cursor-pointer"
                   } ${isSelected ? "bg-blue-50" : ""}`}
-                  onDoubleClick={() => !selectionMode && handleViewResult(result)}
+                  onDoubleClick={() =>
+                    !selectionMode && handleViewResult(result)
+                  }
                   onClick={() =>
-                    selectionMode ? toggleResultSelection(result.id) : handleViewResult(result)
+                    selectionMode
+                      ? toggleResultSelection(result.id)
+                      : handleViewResult(result)
                   }
                 >
                   {/* Selection Checkbox - Always visible in selection mode */}
@@ -907,7 +914,9 @@ export default function ProcessingResultsTab() {
 
                       {/* Date */}
                       <div className="hidden lg:block text-xs text-gray-500 w-24">
-                        {result.processedAt ? formatDate(result.processedAt) : "-"}
+                        {result.processedAt
+                          ? formatDate(result.processedAt)
+                          : "-"}
                       </div>
                     </>
                   )}
@@ -958,9 +967,13 @@ export default function ProcessingResultsTab() {
                       ? "border-blue-400 bg-blue-50 ring-2 ring-blue-300"
                       : "border-gray-200 hover:border-gray-300"
                   }`}
-                  onDoubleClick={() => !selectionMode && handleViewResult(result)}
+                  onDoubleClick={() =>
+                    !selectionMode && handleViewResult(result)
+                  }
                   onClick={() =>
-                    selectionMode ? toggleResultSelection(result.id) : handleViewResult(result)
+                    selectionMode
+                      ? toggleResultSelection(result.id)
+                      : handleViewResult(result)
                   }
                 >
                   {/* Selection Checkbox Overlay - Top right corner */}
@@ -983,105 +996,105 @@ export default function ProcessingResultsTab() {
                   )}
 
                   {/* Card Header */}
-                <div className="p-4 border-b border-gray-100">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
-                      <FileText className="h-5 w-5 text-blue-600" />
+                  <div className="p-4 border-b border-gray-100">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                        <FileText className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-sm font-semibold text-gray-900 truncate">
+                          {result.title || "-"}
+                        </h3>
+                        <p className="text-xs text-gray-500 truncate mt-0.5">
+                          {result.templateName || result.templateId || "-"}
+                        </p>
+                      </div>
+                      <span
+                        className={`flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(
+                          result.status
+                        )}`}
+                      >
+                        {getStatusIcon(result.status)}
+                      </span>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="text-sm font-semibold text-gray-900 truncate">
-                        {result.title || "-"}
-                      </h3>
-                      <p className="text-xs text-gray-500 truncate mt-0.5">
-                        {result.templateName || result.templateId || "-"}
+
+                    {/* Summary Preview */}
+                    {result.summaryPreview && (
+                      <p className="text-xs text-gray-500 mt-2 line-clamp-2">
+                        {result.summaryPreview}
                       </p>
-                    </div>
-                    <span
-                      className={`flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(
-                        result.status
-                      )}`}
-                    >
-                      {getStatusIcon(result.status)}
-                    </span>
+                    )}
                   </div>
 
-                  {/* Summary Preview */}
-                  {result.summaryPreview && (
-                    <p className="text-xs text-gray-500 mt-2 line-clamp-2">
-                      {result.summaryPreview}
-                    </p>
-                  )}
-                </div>
+                  {/* Card Body - Metadata */}
+                  <div className="px-4 py-3 space-y-2">
+                    {/* Tags */}
+                    {result.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {result.tags.slice(0, 3).map((tag) => (
+                          <span
+                            key={tag}
+                            className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        {result.tags.length > 3 && (
+                          <span className="text-xs text-gray-400">
+                            +{result.tags.length - 3}
+                          </span>
+                        )}
+                      </div>
+                    )}
 
-                {/* Card Body - Metadata */}
-                <div className="px-4 py-3 space-y-2">
-                  {/* Tags */}
-                  {result.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {result.tags.slice(0, 3).map((tag) => (
-                        <span
-                          key={tag}
-                          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700"
-                        >
-                          {tag}
+                    {/* Stats Row */}
+                    <div className="flex items-center justify-between text-xs text-gray-500">
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1">
+                          <BarChart3 className="h-3.5 w-3.5" />
+                          {formatConfidence(result.confidence)}
                         </span>
-                      ))}
-                      {result.tags.length > 3 && (
-                        <span className="text-xs text-gray-400">
-                          +{result.tags.length - 3}
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3.5 w-3.5" />
+                          {formatDuration(result.audioDuration)}
                         </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Stats Row */}
-                  <div className="flex items-center justify-between text-xs text-gray-500">
-                    <div className="flex items-center gap-3">
+                      </div>
                       <span className="flex items-center gap-1">
-                        <BarChart3 className="h-3.5 w-3.5" />
-                        {formatConfidence(result.confidence)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3.5 w-3.5" />
-                        {formatDuration(result.audioDuration)}
+                        <Calendar className="h-3.5 w-3.5" />
+                        {result.processedAt
+                          ? formatDate(result.processedAt)
+                          : "-"}
                       </span>
                     </div>
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-3.5 w-3.5" />
-                      {result.processedAt
-                        ? formatDate(result.processedAt)
-                        : "-"}
-                    </span>
                   </div>
-                </div>
 
-                {/* Card Footer - Actions */}
-                {!selectionMode && (
-                  <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleViewResult(result);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors"
-                    >
-                      <Eye className="h-3.5 w-3.5" />
-                      {t("results.viewResult")}
-                    </button>
-                    {canDelete && (
+                  {/* Card Footer - Actions */}
+                  {!selectionMode && (
+                    <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDeleteResult(result);
+                          handleViewResult(result);
                         }}
-                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                        title={t("results.deleteResult")}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Eye className="h-3.5 w-3.5" />
+                        {t("results.viewResult")}
                       </button>
-                    )}
-                  </div>
-                )}
+                      {canDelete && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteResult(result);
+                          }}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                          title={t("results.deleteResult")}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

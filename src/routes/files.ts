@@ -1605,13 +1605,17 @@ router.post(
               await tx.fileShare.deleteMany({
                 where: { fileId: summaryId, fileType: "text" },
               });
-              await tx.textFile.delete({ where: { id: summaryId } }).catch(() => {});
+              await tx.textFile
+                .delete({ where: { id: summaryId } })
+                .catch(() => {});
             }
             if (realtimeId) {
               await tx.fileShare.deleteMany({
                 where: { fileId: realtimeId, fileType: "text" },
               });
-              await tx.textFile.delete({ where: { id: realtimeId } }).catch(() => {});
+              await tx.textFile
+                .delete({ where: { id: realtimeId } })
+                .catch(() => {});
             }
           });
 
@@ -1653,7 +1657,9 @@ router.post(
         success: true,
         deleted,
         failed,
-        message: `Deleted ${deleted.audio + deleted.text + deleted.pairs} files`,
+        message: `Deleted ${
+          deleted.audio + deleted.text + deleted.pairs
+        } files`,
       });
     } catch (error) {
       logger.error("Error in bulk delete:", error);

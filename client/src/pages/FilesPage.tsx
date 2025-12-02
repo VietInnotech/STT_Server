@@ -629,7 +629,8 @@ export default function FilesPage() {
     if (selectedFiles.size === 0) return;
 
     const selectedList = filteredFiles.filter((f) => selectedFiles.has(f.id));
-    if (!confirm(t("confirmBulkDelete", { count: selectedList.length }))) return;
+    if (!confirm(t("confirmBulkDelete", { count: selectedList.length })))
+      return;
 
     setBulkDeleting(true);
     try {
@@ -647,7 +648,11 @@ export default function FilesPage() {
         }
       }
 
-      const response = await filesApi.bulkDelete({ audioIds, textIds, pairIds });
+      const response = await filesApi.bulkDelete({
+        audioIds,
+        textIds,
+        pairIds,
+      });
       const { deleted, failed } = response.data;
       const totalDeleted = deleted.audio + deleted.text + deleted.pairs;
       const totalFailed = failed.audio + failed.text + failed.pairs;
@@ -811,7 +816,8 @@ export default function FilesPage() {
               onClick={toggleSelectAll}
               className="flex items-center gap-2 text-sm text-blue-700 hover:text-blue-900"
             >
-              {selectedFiles.size === filteredFiles.length && filteredFiles.length > 0 ? (
+              {selectedFiles.size === filteredFiles.length &&
+              filteredFiles.length > 0 ? (
                 <>
                   <CheckSquare className="h-4 w-4" />
                   {t("deselectAll")}
@@ -1553,9 +1559,7 @@ export default function FilesPage() {
       )}
 
       {/* AI Processing Results Tab Content */}
-      {activeTab === "results" && (
-        <ProcessingResultsTab />
-      )}
+      {activeTab === "results" && <ProcessingResultsTab />}
     </div>
   );
 }
