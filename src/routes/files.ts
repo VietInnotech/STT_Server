@@ -31,6 +31,7 @@ import {
   getDefaultAudioRetentionDays,
   cleanupTempFile,
 } from "../services/audioStorageService";
+import { sanitizeFilename } from "../services/exportFormatters";
 
 const router = Router();
 
@@ -1143,18 +1144,42 @@ router.get(
           audioFile.id
         );
 
+        // Sanitize filename for HTTP headers (remove invalid characters)
+        const sanitizedFilename = sanitizeFilename(filename);
+
         // Set headers
         res.setHeader("Content-Type", mimeType);
         res.setHeader(
           "Content-Disposition",
-          `attachment; filename="${filename}"`
+          `attachment; filename="${sanitizedFilename}"`
         );
         res.setHeader("Content-Length", fileSize);
+
+        // Handle stream errors
+        stream.on("error", (streamErr: Error) => {
+          logger.error("Audio stream error", {
+            id,
+            error: streamErr.message,
+            stack: streamErr.stack,
+          });
+          if (!res.headersSent) {
+            res
+              .status(500)
+              .json({ error: "Failed to stream audio file" });
+          } else {
+            res.end();
+          }
+        });
 
         // Pipe the stream to response
         stream.pipe(res);
       } catch (streamErr) {
-        logger.error("Failed to stream audio file", { id, error: streamErr });
+        logger.error("Failed to retrieve audio file", {
+          id,
+          error:
+            streamErr instanceof Error ? streamErr.message : String(streamErr),
+          stack: streamErr instanceof Error ? streamErr.stack : undefined,
+        });
         return res.status(500).json({ error: "Failed to retrieve audio file" });
       }
     } catch (error) {
@@ -1216,11 +1241,14 @@ router.get(
         textFile.encryptedIV
       );
 
+      // Sanitize filename for HTTP headers
+      const sanitizedTextFilename = sanitizeFilename(textFile.filename);
+
       // Set headers
       res.setHeader("Content-Type", textFile.mimeType);
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="${textFile.filename}"`
+        `attachment; filename="${sanitizedTextFilename}"`
       );
       res.setHeader("Content-Length", decryptedData.length);
 
@@ -2804,6 +2832,17 @@ router.get(
               realtimeFile: true,
             },
           },
+          sourceAudio: {
+            select: {
+              id: true,
+              filename: true,
+              originalName: true,
+              fileSize: true,
+              mimeType: true,
+              duration: true,
+              uploadedAt: true,
+            },
+          },
         },
       });
 
@@ -2908,6 +2947,18 @@ router.get(
           liveTranscript,
           liveTranscriptPairId,
           sourceAudioId: result.sourceAudioId,
+          sourceAudio: result.sourceAudio
+            ? {
+                id: result.sourceAudio.id,
+                filename:
+                  result.sourceAudio.originalName ||
+                  result.sourceAudio.filename,
+                fileSize: result.sourceAudio.fileSize,
+                mimeType: result.sourceAudio.mimeType,
+                duration: result.sourceAudio.duration,
+                uploadedAt: result.sourceAudio.uploadedAt,
+              }
+            : null,
           tags: result.tags.map((t) => t.tag.name),
           confidence: result.confidence,
           processingTime: result.processingTime,

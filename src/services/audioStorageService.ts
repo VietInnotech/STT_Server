@@ -296,41 +296,53 @@ export async function getAudioStream(audioFileId: string): Promise<{
   });
 
   if (!audioFile) {
-    throw new Error("Audio file not found");
+    throw new Error("Audio file not found in database");
   }
 
   // Check if stored on filesystem or legacy DB
   if (audioFile.filePath) {
     // Filesystem storage - stream decrypt
     const absolutePath = getAudioFilePath(audioFile.filePath);
-    const stream = await decryptFileToStream(absolutePath);
-    return {
-      stream,
-      mimeType: audioFile.mimeType,
-      filename: audioFile.filename,
-      fileSize: audioFile.fileSize,
-    };
+    try {
+      const stream = await decryptFileToStream(absolutePath);
+      return {
+        stream,
+        mimeType: audioFile.mimeType,
+        filename: audioFile.filename,
+        fileSize: audioFile.fileSize,
+      };
+    } catch (err) {
+      throw new Error(
+        `Filesystem audio stream failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   } else if (audioFile.encryptedData) {
     // Legacy DB storage - decrypt from buffer
-    const { decrypt } = await import("../utils/encryption");
-    const decrypted = decrypt(
-      Buffer.from(audioFile.encryptedData),
-      audioFile.encryptedIV
-    );
+    try {
+      const { decrypt } = await import("../utils/encryption");
+      const decrypted = decrypt(
+        Buffer.from(audioFile.encryptedData),
+        audioFile.encryptedIV
+      );
 
-    // Convert buffer to readable stream
-    const { Readable } = await import("stream");
-    const stream = Readable.from(decrypted);
+      // Convert buffer to readable stream
+      const { Readable } = await import("stream");
+      const stream = Readable.from(decrypted);
 
-    return {
-      stream,
-      mimeType: audioFile.mimeType,
-      filename: audioFile.filename,
-      fileSize: audioFile.fileSize,
-    };
+      return {
+        stream,
+        mimeType: audioFile.mimeType,
+        filename: audioFile.filename,
+        fileSize: audioFile.fileSize,
+      };
+    } catch (err) {
+      throw new Error(
+        `Database audio decryption failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   } else {
     throw new Error(
-      "Audio file has no content (neither filePath nor encryptedData)"
+      "Audio file has no content (neither filePath nor encryptedData available)"
     );
   }
 }

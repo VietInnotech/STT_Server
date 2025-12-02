@@ -204,6 +204,13 @@ export async function decryptFileToStream(
 
     headerStream.on("end", () => {
       try {
+        // Validate header was fully read
+        if (offset < STREAM_HEADER_LENGTH + AUTH_TAG_LENGTH) {
+          throw new Error(
+            `Incomplete file header: read ${offset} bytes, expected ${STREAM_HEADER_LENGTH + AUTH_TAG_LENGTH}`
+          );
+        }
+
         // Extract header components
         const salt = headerBuffer.subarray(0, SALT_LENGTH);
         const iv = headerBuffer.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
@@ -230,16 +237,44 @@ export async function decryptFileToStream(
           start: STREAM_HEADER_LENGTH + AUTH_TAG_LENGTH,
         });
 
+        // Handle read stream errors
+        encryptedStream.on("error", (err: Error) => {
+          reject(
+            new Error(
+              `Failed to read encrypted file: ${err.message}`
+            )
+          );
+        });
+
+        // Handle decipher errors (includes auth tag failures)
+        decipher.on("error", (err: Error) => {
+          reject(
+            new Error(
+              `Decryption failed (possible corruption or wrong key): ${err.message}`
+            )
+          );
+        });
+
         // Pipe through decipher
         const decryptedStream = encryptedStream.pipe(decipher);
 
         resolve(decryptedStream);
       } catch (err) {
-        reject(err);
+        reject(
+          new Error(
+            `Header parsing failed: ${err instanceof Error ? err.message : String(err)}`
+          )
+        );
       }
     });
 
-    headerStream.on("error", reject);
+    headerStream.on("error", (err: Error) => {
+      reject(
+        new Error(
+          `Failed to read file header: ${err.message}`
+        )
+      );
+    });
   });
 }
 

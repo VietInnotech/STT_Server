@@ -217,6 +217,15 @@ export interface TextFilePairItem {
   createdAt?: string;
 }
 
+export interface SourceAudioInfo {
+  id: string;
+  filename: string;
+  fileSize: number;
+  mimeType: string;
+  duration: number | null;
+  uploadedAt: string;
+}
+
 export interface ProcessingResultItem {
   id: string;
   title: string | null;
@@ -398,6 +407,7 @@ export const filesApi = {
         liveTranscript: string | null;
         liveTranscriptPairId: string | null;
         sourceAudioId: string | null;
+        sourceAudio: SourceAudioInfo | null;
       };
     }>(`/api/files/results/${id}`),
 

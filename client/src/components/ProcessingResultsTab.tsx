@@ -24,7 +24,7 @@ import {
   List,
   LayoutGrid,
 } from "lucide-react";
-import { filesApi, type ProcessingResultItem, templatesApi } from "../lib/api";
+import { filesApi, type ProcessingResultItem, type SourceAudioInfo, templatesApi } from "../lib/api";
 import { useSettingsStore } from "../stores/settings";
 import { formatDate } from "../lib/formatters";
 import { Pagination } from "./Pagination";
@@ -170,6 +170,8 @@ export default function ProcessingResultsTab() {
     liveTranscript: string | null;
     liveTranscriptPairId: string | null;
     sourceAudioId: string | null;
+    sourceAudio: SourceAudioInfo | null;
+    sourceAudioUrl: string | null;
   } | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
   const [activeTab, setActiveTab] = useState<
@@ -306,6 +308,27 @@ export default function ProcessingResultsTab() {
     setActiveTab("summary"); // Reset to summary tab
     try {
       const res = await filesApi.getResult(result.id);
+      
+      // Fetch source audio blob if available
+      let sourceAudioUrl: string | null = null;
+      if (res.data.result?.sourceAudioId) {
+        try {
+          const audioResp = await filesApi.getAudio(res.data.result.sourceAudioId);
+          let blob = audioResp.data as Blob;
+          try {
+            const contentType = (audioResp as any).headers?.["content-type"] || "";
+            if (contentType && blob.type !== contentType) {
+              blob = new Blob([blob], { type: contentType });
+            }
+          } catch {
+            // Ignore and use blob as-is
+          }
+          sourceAudioUrl = URL.createObjectURL(blob);
+        } catch (err) {
+          logger.error("Failed to load source audio", err);
+        }
+      }
+      
       setResultContent({
         summary: res.data.result?.summary || null,
         summaryData: res.data.result?.summaryData || null,
@@ -313,6 +336,8 @@ export default function ProcessingResultsTab() {
         liveTranscript: res.data.result?.liveTranscript || null,
         liveTranscriptPairId: res.data.result?.liveTranscriptPairId || null,
         sourceAudioId: res.data.result?.sourceAudioId || null,
+        sourceAudio: res.data.result?.sourceAudio || null,
+        sourceAudioUrl,
       });
     } catch (err) {
       console.error("Failed to fetch result content", err);
@@ -873,6 +898,10 @@ export default function ProcessingResultsTab() {
         title={viewingResult?.title || t("results.viewResult")}
         open={!!viewingResult}
         onClose={() => {
+          // Cleanup Object URL to prevent memory leaks
+          if (resultContent?.sourceAudioUrl) {
+            URL.revokeObjectURL(resultContent.sourceAudioUrl);
+          }
           setViewingResult(null);
           setResultContent(null);
         }}
@@ -1107,15 +1136,26 @@ export default function ProcessingResultsTab() {
                   )}
                 </div>
 
-                {/* Source Audio Link */}
-                {resultContent?.sourceAudioId && (
+                {/* Source Audio Player */}
+                {resultContent?.sourceAudioId && resultContent?.sourceAudio && (
                   <div className="mt-4 pt-4 border-t border-gray-200">
-                    <div className="flex items-center gap-2 text-sm text-gray-500">
-                      <FileAudio className="h-4 w-4" />
-                      <span>{t("results.sourceAudio")}:</span>
-                      <code className="text-xs bg-gray-100 px-2 py-0.5 rounded">
-                        {resultContent.sourceAudioId}
-                      </code>
+                    <h4 className="text-sm font-semibold text-gray-900 mb-3">
+                      {t("results.sourceAudio")}
+                    </h4>
+                    <audio
+                      controls
+                      className="w-full mb-2"
+                      preload="metadata"
+                    >
+                      <source
+                        src={resultContent.sourceAudioUrl || undefined}
+                        type={resultContent.sourceAudio.mimeType || "audio/wav"}
+                      />
+                      {t("audioNotSupported")}
+                    </audio>
+                    <div className="text-xs text-gray-500 space-y-1">
+                      <p>{t("filename")}: {resultContent.sourceAudio.filename}</p>
+                      <p>{t("size")}: {(resultContent.sourceAudio.fileSize / 1024 / 1024).toFixed(2)} MB</p>
                     </div>
                   </div>
                 )}
