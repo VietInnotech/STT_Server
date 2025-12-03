@@ -39,7 +39,7 @@ export default function TemplatesPage() {
       try {
         const res = await templatesApi.list();
         if (!mounted) return;
-        setTemplates(res.data.templates);
+        setTemplates(res.data.templates ?? []);
       } catch (err: any) {
         console.error("Failed to load templates", err);
         if (!mounted) return;
